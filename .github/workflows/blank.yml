@@ -44,11 +44,7 @@ jobs:
           rm -f data/google_news_dedup_audit_*.csv
           ls -lah data
 
-      - name: Upload deduped output only
-        uses: actions/upload-artifact@v4
-        with:
-          name: deduped
-          path: data/latest_deduped.csv
+    
           
       - name: Commit CSV to repo
         run: |
