@@ -327,15 +327,15 @@ def main():
     if not results.empty:
         results = results.drop_duplicates(subset=["link"]).reset_index(drop=True)
 
-    raw_results_file = DATA_DIR / f"google_news_raw_{ts}_past{PAST_DAYS}d.csv"
-    audit_search_file = DATA_DIR / f"search_audit_{ts}.csv"
+    raw_results_file = DATA_DIR / f"google_news_raw_{ts}_past{PAST_DAYS}d.xlsx"
+    audit_search_file = DATA_DIR / f"search_audit_{ts}.xlsx"
 
     results.to_csv(raw_results_file, index=False)
     search_df.to_csv(audit_search_file, index=False)
 
     # Dedupe the raw file we just created
-    dedup_file = DATA_DIR / f"google_news_dedup_{ts}_past{PAST_DAYS}d.csv"
-    dedup_audit = DATA_DIR / f"google_news_dedup_audit_{ts}.csv"
+    dedup_file = DATA_DIR / f"google_news_dedup_{ts}_past{PAST_DAYS}d.xlsx"
+    dedup_audit = DATA_DIR / f"google_news_dedup_audit_{ts}.xlsx"
 
     orig, cleaned = semantic_dedupe_csv(
         infile=str(raw_results_file),
@@ -345,7 +345,7 @@ def main():
         model_name=MODEL_NAME,
     )
     # Always keep a stable single file for automation
-    latest = DATA_DIR / "latest_deduped.csv"
+    latest = DATA_DIR / "latest_deduped.xlsx"
     shutil.copyfile(dedup_file, latest)
     print(f"Saved latest: {latest}")
 
@@ -362,6 +362,7 @@ if __name__ == "__main__":
 
 
 # %%
+
 
 
 
