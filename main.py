@@ -330,6 +330,9 @@ def main():
     raw_results_file = DATA_DIR / f"google_news_raw_{ts}_past{PAST_DAYS}d.xlsx"
     audit_search_file = DATA_DIR / f"search_audit_{ts}.xlsx"
 
+    
+    results = results.apply(lambda s: s.dt.tz_localize(None) if hasattr(s, "dt") and getattr(s.dt, "tz", None) is not None else s)
+
     results.to_excel(raw_results_file, index=False, engine = "openpyxl")
     search_df.to_excel(audit_search_file, index=False, engine = "openpyxl")
 
@@ -362,6 +365,7 @@ if __name__ == "__main__":
 
 
 # %%
+
 
 
 
