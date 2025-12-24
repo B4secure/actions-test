@@ -19,7 +19,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # CONFIG (can be overridden by GitHub Actions env vars)
 # ---------------------------
 PAST_DAYS = int(os.getenv("PAST_DAYS", "1"))
-LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "18"))
+LOOKBACK_HOURS = int((os.getenv("LOOKBACK_HOURS") or "18").strip())
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "50"))
 DUP_THRESHOLD = float(os.getenv("DUP_THRESHOLD", "0.60"))
 MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
@@ -367,6 +367,7 @@ if __name__ == "__main__":
 
 
 # %%
+
 
 
 
