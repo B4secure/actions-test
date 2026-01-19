@@ -162,15 +162,57 @@ def filter_last_n_hours(df, hours: int):
 
 def parse_search_library(text: str) -> pd.DataFrame:
     rows = []
+    pending_name = None  # used when we detect "Name<TAB>" and then URLs follow on next lines
+
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        if "\t" not in line:
-            rows.append({"search_name": "UNMAPPED_LINE", "raw_query": line})
+
+        # If it's a URL on its own line, treat as a search entry (best effort)
+        if line.startswith("http"):
+            if pending_name:
+                rows.append({"search_name": pending_name, "raw_query": f'"{line}"'})
+            else:
+                rows.append({"search_name": "URL_SOURCE", "raw_query": f'"{line}"'})
             continue
-        name, query = line.split("\t", 1)
-        rows.append({"search_name": name.strip(), "raw_query": query.strip()})
+
+        # Preferred: tab-separated "name<TAB>query"
+        if "\t" in line:
+            name, query = line.split("\t", 1)
+            name = name.strip()
+            query = query.strip()
+
+            # If query is empty, the next lines might be URLs (multi-line block)
+            if query == "":
+                pending_name = name
+                continue
+
+            # If query contains embedded newlines (rare in a single 'line'), split and keep valid URLs too
+            # (This mainly protects against accidental pasted blocks.)
+            if "\n" in query:
+                parts = [p.strip().strip('"') for p in query.splitlines() if p.strip()]
+                if parts and parts[0].startswith("http"):
+                    for u in parts:
+                        rows.append({"search_name": name, "raw_query": f'"{u}"'})
+                    pending_name = None
+                    continue
+
+            rows.append({"search_name": name, "raw_query": query})
+            pending_name = None
+            continue
+
+        # Fallback: split on 2+ spaces (covers many "Name    query" lines)
+        m = re.split(r"\s{2,}", line, maxsplit=1)
+        if len(m) == 2:
+            name, query = m[0].strip(), m[1].strip()
+            rows.append({"search_name": name, "raw_query": query})
+            pending_name = None
+            continue
+
+        # Otherwise can't parse safely
+        rows.append({"search_name": "UNMAPPED_LINE", "raw_query": line})
+
     return pd.DataFrame(rows)
 
 
@@ -325,6 +367,8 @@ def main():
     results = collect_google_news(to_run, past_days=PAST_DAYS, max_items=MAX_ITEMS)
     results = filter_last_n_hours(results, hours=LOOKBACK_HOURS)
 
+    
+
     if not results.empty:
         results = results.drop_duplicates(subset=["link"]).reset_index(drop=True)
 
@@ -336,6 +380,12 @@ def main():
 
     results.to_excel(raw_results_file, index=False, engine = "openpyxl")
     search_df.to_excel(audit_search_file, index=False, engine = "openpyxl")
+
+    skipped = search_df[search_df["search_name"] == "UNMAPPED_LINE"]
+    print(f"Parsed {len(to_run)} runnable searches; skipped {len(skipped)} unmapped lines")
+    if not skipped.empty:
+        print(skipped.head(20).to_string(index=False))
+
 
     # Dedupe the raw file we just created
     dedup_file = DATA_DIR / f"google_news_dedup_{ts}_past{PAST_DAYS}d.xlsx"
@@ -367,6 +417,7 @@ if __name__ == "__main__":
 
 
 # %%
+
 
 
 
