@@ -24,6 +24,12 @@ MAX_ITEMS = int(os.getenv("MAX_ITEMS", "30"))
 DUP_THRESHOLD = float(os.getenv("DUP_THRESHOLD", "0.60"))
 MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
 
+# NEW: Feature flags for future improvements
+USE_NEWSAPI = os.getenv("USE_NEWSAPI", "false").lower() == "true"
+USE_BING_NEWS = os.getenv("USE_BING_NEWS", "false").lower() == "true"
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
+BING_NEWS_KEY = os.getenv("BING_NEWS_KEY", "")
+
 DEFAULT_HL, DEFAULT_GL, DEFAULT_CEID = "en-GB", "GB", "GB:en"
 
 
@@ -85,7 +91,7 @@ High Level City searches Spain English   ("Madrid" OR "Barcelona") AND (bomb OR 
 High Level City searches Spain Spanish   ("Madrid" OR "Barcelona") AND (bomba OR explosión OR tiroteo OR puñalada OR "paquete sospechoso")
 Local Town Searches Las Rozas & La Roca English   ("Las Rozas" OR "La Roca" OR "Mataro" OR "Badalona") AND (protest OR boycott OR bomb OR explosion OR shooting OR stabbing)
 Local Town Searches Las Rozas & La Roca Spanish   ("Las Rozas" OR "La Roca" OR "Mataro" OR "Badalona") AND (protesta OR boicot OR bomba OR explosión OR tiroteo OR puñalada)
-Village Search Las Rozas & La Roca   ("Las Rozas Village" OR i"La Roca Village")
+Village Search Las Rozas & La Roca   ("Las Rozas Village" OR "La Roca Village")
 Local Town Searches Bicester & Kildare	("Bicester" OR "Kildare" OR "Newbridge") AND (protest OR boycott OR bomb OR explosion OR shooting OR stabbing)
 Village Search Bicester & Kildare   ("Bicester Village" OR "Kildare Village")
 High Level City searches UK & Ireland   ("London" OR "Oxford" OR "Dublin") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package")
@@ -97,13 +103,15 @@ High Level City searches Italy English   ("Milan" OR "Bologna") AND (bomb OR exp
 High Level City searches Italy Italian   ("Milan" OR "Bologna") AND (bomba OR esplosione OR sparatoria OR accoltellamento)
 Local Town Searches Fidenza Italian   ("Fidenza" OR "Parma" OR "Piacenza" OR "Cremona") AND (protesta OR boicottaggio OR bomba OR esplosione)
 Village Search Fidenza	("Fidenza Village" OR ("Fidenza" AND ("designer outlet" OR outlet OR retail)))
-
-
 """.strip()
 
 
+# ---------------------------
+# HELPER FUNCTIONS
+# ---------------------------
 
 def parse_published_dt(published_str: str):
+    """Parse published date string to UTC datetime."""
     if not published_str:
         return None
     try:
@@ -118,12 +126,17 @@ def parse_published_dt(published_str: str):
 
 
 def filter_last_n_hours(df, hours: int):
+    """Filter dataframe to only include articles from the last N hours."""
+    if df.empty:
+        return df
+    
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     df = df.copy()
     df["published_dt_utc"] = df["published"].apply(parse_published_dt)
     df = df[df["published_dt_utc"].notna()]
     df = df[df["published_dt_utc"] >= cutoff].reset_index(drop=True)
     return df
+
 
 def edition_for_search(search_name: str) -> tuple[str, str, str]:
     """
@@ -138,15 +151,16 @@ def edition_for_search(search_name: str) -> tuple[str, str, str]:
 
 
 def parse_search_library(text: str) -> pd.DataFrame:
+    """Parse search library text into structured dataframe."""
     rows = []
-    pending_name = None  # used when we detect "Name<TAB>" and then URLs follow on next lines
+    pending_name = None
 
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
 
-        # If it's a URL on its own line, treat as a search entry (best effort)
+        # URL on its own line
         if line.startswith("http"):
             if pending_name:
                 rows.append({"search_name": pending_name, "raw_query": f'"{line}"'})
@@ -154,19 +168,16 @@ def parse_search_library(text: str) -> pd.DataFrame:
                 rows.append({"search_name": "URL_SOURCE", "raw_query": f'"{line}"'})
             continue
 
-        # Preferred: tab-separated "name<TAB>query"
+        # Tab-separated "name<TAB>query"
         if "\t" in line:
             name, query = line.split("\t", 1)
             name = name.strip()
             query = query.strip()
 
-            # If query is empty, the next lines might be URLs (multi-line block)
             if query == "":
                 pending_name = name
                 continue
 
-            # If query contains embedded newlines (rare in a single 'line'), split and keep valid URLs too
-            # (This mainly protects against accidental pasted blocks.)
             if "\n" in query:
                 parts = [p.strip().strip('"') for p in query.splitlines() if p.strip()]
                 if parts and parts[0].startswith("http"):
@@ -179,7 +190,7 @@ def parse_search_library(text: str) -> pd.DataFrame:
             pending_name = None
             continue
 
-        # Fallback: split on 2+ spaces (covers many "Name    query" lines)
+        # Fallback: split on 2+ spaces
         m = re.split(r"\s{2,}", line, maxsplit=1)
         if len(m) == 2:
             name, query = m[0].strip(), m[1].strip()
@@ -187,93 +198,266 @@ def parse_search_library(text: str) -> pd.DataFrame:
             pending_name = None
             continue
 
-        # Otherwise can't parse safely
+        # Can't parse
         rows.append({"search_name": "UNMAPPED_LINE", "raw_query": line})
 
     return pd.DataFrame(rows)
 
 
-def is_google_news_compatible(q: str) -> bool:
-    q = (q or "").strip().lower()
-    if not q:
-        return False
-    if q.startswith("http://") or q.startswith("https://"):
-        return False
-    if "to:" in q or q.startswith("@") or " @" in q:
-        return False
-    return True
-
+# ---------------------------
+# NEWS COLLECTION FUNCTIONS
+# ---------------------------
 
 def google_news_rss_url(query: str, past_days: int, hl: str, gl: str, ceid: str) -> str:
+    """Generate Google News RSS URL."""
     full = f"{query} when:{past_days}d"
     q = urllib.parse.quote(full)
     return f"https://news.google.com/rss/search?q={q}&hl={hl}&gl={gl}&ceid={ceid}"
 
 
-
-def collect_google_news(df_searches: pd.DataFrame, past_days: int, max_items: int) -> pd.DataFrame:
-    out_rows = []
-
-    for _, r in df_searches.iterrows():
-        name = r["search_name"]
-        q = r["raw_query"]
-
-        # Choose the right Google News edition for this query
-        hl, gl, ceid = edition_for_search(name)
-
-        rss = google_news_rss_url(q, past_days, hl=hl, gl=gl, ceid=ceid)
-        feed = feedparser.parse(rss)
-
+def fetch_google_news_rss(search_name: str, query: str, past_days: int, max_items: int) -> list[dict]:
+    """Fetch articles from Google News RSS for a single search query."""
+    hl, gl, ceid = edition_for_search(search_name)
+    rss_url = google_news_rss_url(query, past_days, hl=hl, gl=gl, ceid=ceid)
+    
+    try:
+        feed = feedparser.parse(rss_url)
+        articles = []
+        
         for entry in feed.entries[:max_items]:
-            out_rows.append(
-                {
-                    "search_name": name,
-                    "search_query": q,
-                    "title": entry.get("title", ""),
-                    "published": entry.get("published", ""),
-                    "link": entry.get("link", ""),
-                    "past_days": past_days,
-                    "hl": hl,
-                    "gl": gl,
-                    "ceid": ceid,
-                }
-            )
+            articles.append({
+                "search_name": search_name,
+                "search_query": query,
+                "title": entry.get("title", ""),
+                "published": entry.get("published", ""),
+                "link": entry.get("link", ""),
+                "source": "google_news_rss",
+                "past_days": past_days,
+                "hl": hl,
+                "gl": gl,
+                "ceid": ceid,
+            })
+        
+        return articles
+    except Exception as e:
+        print(f"Error fetching RSS for '{search_name}': {e}")
+        return []
 
-    return pd.DataFrame(out_rows)
+
+def fetch_newsapi(search_name: str, query: str, hours_back: int, max_items: int = 100) -> list[dict]:
+    """
+    Fetch articles from NewsAPI (to be implemented).
+    
+    To enable:
+    1. Get free API key from https://newsapi.org
+    2. Set environment variable: NEWSAPI_KEY=your_key_here
+    3. Set environment variable: USE_NEWSAPI=true
+    """
+    if not NEWSAPI_KEY:
+        return []
+    
+    try:
+        import requests
+        
+        from_date = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
+        
+        url = "https://newsapi.org/v2/everything"
+        params = {
+            'q': query,
+            'from': from_date,
+            'sortBy': 'publishedAt',
+            'apiKey': NEWSAPI_KEY,
+            'pageSize': min(max_items, 100),  # API limit
+            'language': 'en'  # TODO: derive from region rules
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        articles = []
+        
+        for article in data.get('articles', []):
+            articles.append({
+                "search_name": search_name,
+                "search_query": query,
+                "title": article.get('title', ''),
+                "published": article.get('publishedAt', ''),
+                "link": article.get('url', ''),
+                "source": f"newsapi_{article.get('source', {}).get('name', 'unknown')}",
+                "description": article.get('description', ''),
+            })
+        
+        return articles
+        
+    except Exception as e:
+        print(f"Error fetching NewsAPI for '{search_name}': {e}")
+        return []
 
 
+def fetch_bing_news(search_name: str, query: str, hours_back: int, max_items: int = 100) -> list[dict]:
+    """
+    Fetch articles from Bing News Search API (to be implemented).
+    
+    To enable:
+    1. Get API key from Azure Cognitive Services
+    2. Set environment variable: BING_NEWS_KEY=your_key_here
+    3. Set environment variable: USE_BING_NEWS=true
+    """
+    if not BING_NEWS_KEY:
+        return []
+    
+    try:
+        import requests
+        
+        url = "https://api.bing.microsoft.com/v7.0/news/search"
+        headers = {"Ocp-Apim-Subscription-Key": BING_NEWS_KEY}
+        params = {
+            'q': query,
+            'count': min(max_items, 100),
+            'mkt': 'en-GB',  # TODO: derive from region rules
+            'freshness': 'Day'  # Last 24 hours
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        articles = []
+        
+        for article in data.get('value', []):
+            articles.append({
+                "search_name": search_name,
+                "search_query": query,
+                "title": article.get('name', ''),
+                "published": article.get('datePublished', ''),
+                "link": article.get('url', ''),
+                "source": f"bing_{article.get('provider', [{}])[0].get('name', 'unknown')}",
+                "description": article.get('description', ''),
+            })
+        
+        return articles
+        
+    except Exception as e:
+        print(f"Error fetching Bing News for '{search_name}': {e}")
+        return []
 
-def latest_file(pattern: str) -> str | None:
-    files = glob.glob(pattern)
-    if not files:
-        return None
-    files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
-    return files[0]
 
+def collect_all_news(df_searches: pd.DataFrame, past_days: int, lookback_hours: int, max_items: int) -> pd.DataFrame:
+    """
+    Collect news from all enabled sources.
+    
+    This function orchestrates fetching from multiple sources:
+    - Google News RSS (always enabled)
+    - NewsAPI (if USE_NEWSAPI=true and NEWSAPI_KEY is set)
+    - Bing News (if USE_BING_NEWS=true and BING_NEWS_KEY is set)
+    """
+    all_articles = []
+    
+    print(f"\n{'='*60}")
+    print(f"Starting news collection:")
+    print(f"  - Total searches: {len(df_searches)}")
+    print(f"  - Google News RSS: ENABLED")
+    print(f"  - NewsAPI: {'ENABLED' if USE_NEWSAPI else 'DISABLED'}")
+    print(f"  - Bing News: {'ENABLED' if USE_BING_NEWS else 'DISABLED'}")
+    print(f"{'='*60}\n")
+    
+    for idx, row in df_searches.iterrows():
+        search_name = row["search_name"]
+        query = row["raw_query"]
+        
+        print(f"[{idx+1}/{len(df_searches)}] Processing: {search_name[:50]}...")
+        
+        # Always try Google News RSS
+        rss_articles = fetch_google_news_rss(search_name, query, past_days, max_items)
+        all_articles.extend(rss_articles)
+        print(f"  ├─ Google RSS: {len(rss_articles)} articles")
+        
+        # Try NewsAPI if enabled
+        if USE_NEWSAPI and NEWSAPI_KEY:
+            api_articles = fetch_newsapi(search_name, query, lookback_hours, max_items)
+            all_articles.extend(api_articles)
+            print(f"  ├─ NewsAPI: {len(api_articles)} articles")
+        
+        # Try Bing News if enabled
+        if USE_BING_NEWS and BING_NEWS_KEY:
+            bing_articles = fetch_bing_news(search_name, query, lookback_hours, max_items)
+            all_articles.extend(bing_articles)
+            print(f"  └─ Bing News: {len(bing_articles)} articles")
+    
+    df = pd.DataFrame(all_articles)
+    
+    if df.empty:
+        print("\n⚠️  No articles collected from any source!")
+        return df
+    
+    # Apply time filter
+    print(f"\nBefore time filter: {len(df)} articles")
+    df = filter_last_n_hours(df, hours=lookback_hours)
+    print(f"After time filter ({lookback_hours}h): {len(df)} articles")
+    
+    # Remove exact URL duplicates (can happen when multiple sources return same article)
+    df = df.drop_duplicates(subset=["link"]).reset_index(drop=True)
+    print(f"After URL deduplication: {len(df)} articles")
+    
+    return df
+
+
+# ---------------------------
+# DEDUPLICATION
+# ---------------------------
 
 def semantic_dedupe_csv(infile: str, out_clean: str, out_audit: str,
                         threshold: float, model_name: str) -> tuple[int, int]:
+    """
+    Deduplicate articles using semantic similarity.
+    
+    Returns: (original_count, cleaned_count)
+    """
+    print(f"\n{'='*60}")
+    print(f"Starting semantic deduplication...")
+    print(f"  - Input file: {infile}")
+    print(f"  - Similarity threshold: {threshold}")
+    print(f"  - Model: {model_name}")
+    print(f"{'='*60}\n")
+    
     df = pd.read_excel(infile)
+    original_count = len(df)
+    
+    if df.empty:
+        print("⚠️  Input file is empty, nothing to deduplicate")
+        df.to_excel(out_clean, index=False, engine="openpyxl")
+        pd.DataFrame().to_excel(out_audit, index=False, engine="openpyxl")
+        return 0, 0
+    
     df["compare_text"] = df["title"].fillna("").astype(str)
-
+    
+    # Filter out empty titles
     mask = df["compare_text"].str.len() > 0
     df_work = df[mask].copy().reset_index(drop=True)
     orig_idx = df.index[mask].to_numpy()
-
+    
     if df_work.empty:
-        df.drop(columns=["compare_text"], errors="ignore").to_excel(out_clean, index=False)
+        print("⚠️  No valid titles to compare")
+        df.drop(columns=["compare_text"], errors="ignore").to_excel(out_clean, index=False, engine="openpyxl")
         pd.DataFrame().to_excel(out_audit, index=False, engine="openpyxl")
         return len(df), len(df)
-
+    
+    print(f"Loading embedding model: {model_name}...")
     model = SentenceTransformer(model_name)
+    
+    print(f"Generating embeddings for {len(df_work)} articles...")
     emb = model.encode(
         df_work["compare_text"].tolist(),
         normalize_embeddings=True,
-        show_progress_bar=False,
+        show_progress_bar=True,
     )
+    
+    print("Computing similarity matrix...")
     sim = cosine_similarity(emb, emb)
     n = sim.shape[0]
-
+    
+    # Union-Find for grouping duplicates
     parent = list(range(n))
     rank = [0] * n
 
@@ -295,11 +479,17 @@ def semantic_dedupe_csv(infile: str, out_clean: str, out_audit: str,
             parent[rb] = ra
             rank[ra] += 1
 
+    # Group similar articles
+    duplicate_pairs = 0
     for i in range(n):
         for j in range(i + 1, n):
             if sim[i, j] >= threshold:
                 union(i, j)
+                duplicate_pairs += 1
 
+    print(f"Found {duplicate_pairs} similar pairs above threshold {threshold}")
+    
+    # Build groups
     groups = {}
     for i in range(n):
         r = find(i)
@@ -313,6 +503,7 @@ def semantic_dedupe_csv(infile: str, out_clean: str, out_audit: str,
             keep_work.add(g[0])
             continue
 
+        # Keep the earliest article (by original index)
         g_map = [(int(orig_idx[i]), i) for i in g]
         g_map.sort(key=lambda x: x[0])
 
@@ -320,15 +511,13 @@ def semantic_dedupe_csv(infile: str, out_clean: str, out_audit: str,
         keep_work.add(keep_i)
 
         for drop_orig, drop_i in g_map[1:]:
-            audit_rows.append(
-                {
-                    "kept_original_row": keep_orig,
-                    "dropped_original_row": int(drop_orig),
-                    "similarity": float(sim[keep_i, drop_i]),
-                    "kept_title": df.loc[keep_orig, "title"],
-                    "dropped_title": df.loc[int(drop_orig), "title"],
-                }
-            )
+            audit_rows.append({
+                "kept_original_row": keep_orig,
+                "dropped_original_row": int(drop_orig),
+                "similarity": float(sim[keep_i, drop_i]),
+                "kept_title": df.loc[keep_orig, "title"],
+                "dropped_title": df.loc[int(drop_orig), "title"],
+            })
 
     kept_orig_rows = {int(orig_idx[i]) for i in keep_work}
     drop_orig_rows = set(map(int, orig_idx.tolist())) - kept_orig_rows
@@ -340,83 +529,112 @@ def semantic_dedupe_csv(infile: str, out_clean: str, out_audit: str,
     df_clean = df.loc[keep_mask].drop(columns=["compare_text"], errors="ignore").reset_index(drop=True)
     audit = pd.DataFrame(audit_rows)
 
-    df_clean.to_excel(out_clean, index=False, engine = "openpyxl")
-    audit.to_excel(out_audit, index=False, engine = "openpyxl")
-    return len(df), len(df_clean)
+    # Save results
+    df_clean.to_excel(out_clean, index=False, engine="openpyxl")
+    audit.to_excel(out_audit, index=False, engine="openpyxl")
+    
+    cleaned_count = len(df_clean)
+    removed_count = original_count - cleaned_count
+    
+    print(f"\n✅ Deduplication complete:")
+    print(f"  - Original articles: {original_count}")
+    print(f"  - Removed duplicates: {removed_count}")
+    print(f"  - Final articles: {cleaned_count}")
+    print(f"  - Reduction: {(removed_count/original_count*100):.1f}%\n")
+    
+    return original_count, cleaned_count
 
+
+# ---------------------------
+# MAIN WORKFLOW
+# ---------------------------
 
 def main():
-    ts = datetime.now(timezone.utc).strftime("%d_%m%y_UTC")
-
-    search_df = parse_search_library(SEARCH_LIBRARY_TEXT)
-    to_run = search_df.copy()
-
-
-    results = collect_google_news(to_run, past_days=PAST_DAYS, max_items=MAX_ITEMS)
-    results = filter_last_n_hours(results, hours=LOOKBACK_HOURS)
-
+    """Main execution flow."""
+    print("\n" + "="*60)
+    print("NEWS COLLECTION AUTOMATION")
+    print("="*60)
     
-
-    if not results.empty:
-        results = results.drop_duplicates(subset=["link"]).reset_index(drop=True)
-
+    ts = datetime.now(timezone.utc).strftime("%d_%m%y_UTC")
+    
+    # Parse search library
+    print("\nParsing search library...")
+    search_df = parse_search_library(SEARCH_LIBRARY_TEXT)
+    
+    # Filter out unmapped lines
+    to_run = search_df[search_df["search_name"] != "UNMAPPED_LINE"].copy()
+    skipped = search_df[search_df["search_name"] == "UNMAPPED_LINE"]
+    
+    print(f"✓ Parsed {len(to_run)} runnable searches")
+    if not skipped.empty:
+        print(f"⚠️  Skipped {len(skipped)} unmapped lines:")
+        print(skipped.head(10).to_string(index=False))
+    
+    # Collect news from all sources
+    results = collect_all_news(
+        df_searches=to_run,
+        past_days=PAST_DAYS,
+        lookback_hours=LOOKBACK_HOURS,
+        max_items=MAX_ITEMS
+    )
+    
+    # Save raw results
     raw_results_file = DATA_DIR / f"google_news_raw_{ts}_past{PAST_DAYS}d.xlsx"
     audit_search_file = DATA_DIR / f"search_audit_{ts}.xlsx"
-
     
-    results = results.apply(lambda s: s.dt.tz_localize(None) if hasattr(s, "dt") and getattr(s.dt, "tz", None) is not None else s)
-
-    results.to_excel(raw_results_file, index=False, engine = "openpyxl")
-    search_df.to_excel(audit_search_file, index=False, engine = "openpyxl")
-
-    skipped = search_df[search_df["search_name"] == "UNMAPPED_LINE"]
-    print(f"Parsed {len(to_run)} runnable searches; skipped {len(skipped)} unmapped lines")
-    if not skipped.empty:
-        print(skipped.head(20).to_string(index=False))
-
-
-    # Dedupe the raw file we just created
-    dedup_file = DATA_DIR / f"google_news_dedup_{ts}_past{PAST_DAYS}d.xlsx"
-    dedup_audit = DATA_DIR / f"google_news_dedup_audit_{ts}.xlsx"
-
-    orig, cleaned = semantic_dedupe_csv(
-        infile=str(raw_results_file),
-        out_clean=str(dedup_file),
-        out_audit=str(dedup_audit),
-        threshold=DUP_THRESHOLD,
-        model_name=MODEL_NAME,
-    )
-    # Always keep a stable single file for automation
-    latest = DATA_DIR / "latest_deduped.xlsx"
-    shutil.copyfile(dedup_file, latest)
-    print(f"Saved latest: {latest}")
-    print("Total searches to run:", len(to_run))
-    print(to_run["search_name"].value_counts().head(30))
-
-
-
-    print(f"Saved raw:   {raw_results_file} | rows={len(results)}")
-    print(f"Saved audit: {audit_search_file} | searches={len(search_df)}")
-    print(f"Dedupe: original={orig} cleaned={cleaned}")
-    print(f"Saved dedup: {dedup_file}")
-    print(f"Saved dedup audit: {dedup_audit}")
-    print(f"Running with LOOKBACK_HOURS={LOOKBACK_HOURS}")
+    if not results.empty:
+        # Remove timezone info for Excel compatibility
+        results = results.apply(
+            lambda s: s.dt.tz_localize(None) 
+            if hasattr(s, "dt") and getattr(s.dt, "tz", None) is not None 
+            else s
+        )
+        
+        results.to_excel(raw_results_file, index=False, engine="openpyxl")
+        print(f"\n✓ Saved raw results: {raw_results_file} ({len(results)} articles)")
+    else:
+        print("\n⚠️  No results to save!")
+        # Create empty file so workflow doesn't break
+        pd.DataFrame().to_excel(raw_results_file, index=False, engine="openpyxl")
+    
+    search_df.to_excel(audit_search_file, index=False, engine="openpyxl")
+    print(f"✓ Saved search audit: {audit_search_file}")
+    
+    # Semantic deduplication
+    if not results.empty:
+        dedup_file = DATA_DIR / f"google_news_dedup_{ts}_past{PAST_DAYS}d.xlsx"
+        dedup_audit = DATA_DIR / f"google_news_dedup_audit_{ts}.xlsx"
+        
+        orig, cleaned = semantic_dedupe_csv(
+            infile=str(raw_results_file),
+            out_clean=str(dedup_file),
+            out_audit=str(dedup_audit),
+            threshold=DUP_THRESHOLD,
+            model_name=MODEL_NAME,
+        )
+        
+        # Always keep a stable file for automation
+        latest = DATA_DIR / "latest_deduped.xlsx"
+        shutil.copyfile(dedup_file, latest)
+        
+        print(f"✓ Saved deduplicated results: {dedup_file}")
+        print(f"✓ Saved deduplication audit: {dedup_audit}")
+        print(f"✓ Saved latest file: {latest}")
+    
+    # Summary
+    print(f"\n{'='*60}")
+    print("SUMMARY")
+    print(f"{'='*60}")
+    print(f"Configuration:")
+    print(f"  - Lookback hours: {LOOKBACK_HOURS}")
+    print(f"  - Past days filter: {PAST_DAYS}")
+    print(f"  - Max items per search: {MAX_ITEMS}")
+    print(f"  - Dedup threshold: {DUP_THRESHOLD}")
+    print(f"\nTop searches by article count:")
+    if not results.empty:
+        print(results["search_name"].value_counts().head(10).to_string())
+    print(f"\n{'='*60}\n")
 
 
 if __name__ == "__main__":
     main()
-
-
-# %%
-
-
-
-
-
-
-
-
-
-
-
-
