@@ -35,24 +35,23 @@ DEFAULT_HL, DEFAULT_GL, DEFAULT_CEID = "en-GB", "GB", "GB:en"
 
 REGION_RULES = [
     # Belgium
-    (r"Belgium.*Dutch",  ("nl-BE", "BE", "BE:nl")),
-    (r"Belgium.*French", ("fr-BE", "BE", "BE:fr")),
+    
     (r"Belgium.*English",("en-GB", "BE", "BE:en")),
 
     # Germany
-    (r"Germany.*German", ("de-DE", "DE", "DE:de")),
+   
     (r"Germany.*English",("en-GB", "DE", "DE:en")),
 
     # Spain
-    (r"Spain.*Spanish",  ("es-ES", "ES", "ES:es")),
+    
     (r"Spain.*English",  ("en-GB", "ES", "ES:en")),
 
     # France
-    (r"France.*French",  ("fr-FR", "FR", "FR:fr")),
+    
     (r"France.*English", ("en-GB", "FR", "FR:en")),
 
     # Italy
-    (r"Italy.*Italian",  ("it-IT", "IT", "IT:it")),
+   
     (r"Italy.*English",  ("en-GB", "IT", "IT:en")),
 ]
 
@@ -638,3 +637,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
