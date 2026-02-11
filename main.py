@@ -490,7 +490,8 @@ def fetch_apify_twitter(search_name: str, query: str, hours_back: int, max_items
     3. Set environment variable: APIFY_TOKEN=your_token
     4. Set environment variable: USE_APIFY_TWITTER=true
     
-    Free tier: ~50 Actor runs/month
+    Free tier: Includes free credits for ~5-10 runs/month
+    Uses: gentle_cloud~twitter-tweets-scraper (reliable Twitter search scraper)
     """
     if not APIFY_TOKEN:
         return []
@@ -503,44 +504,62 @@ def fetch_apify_twitter(search_name: str, query: str, hours_back: int, max_items
         clean_query = re.sub(r'[()]', '', clean_query)
         clean_query = ' '.join(clean_query.split())[:200]  # Twitter search limit
         
-        # Apify Twitter Scraper API
-        # Using the lightweight scraper that works without Twitter API
-        url = "https://api.apify.com/v2/acts/apidojo~tweet-scraper/run-sync-get-dataset-items"
+        # Use the Twitter Tweets Scraper actor (works for search)
+        # Actor: gentle_cloud~twitter-tweets-scraper
+        url = "https://api.apify.com/v2/acts/gentle_cloud~twitter-tweets-scraper/run-sync-get-dataset-items"
         
         params = {
             'token': APIFY_TOKEN,
+            'timeout': 60,  # Wait up to 60 seconds
         }
         
+        # Input for the Twitter scraper
         payload = {
             "searchTerms": [clean_query],
-            "maxTweets": min(max_items, 50),
-            "sort": "Latest",
+            "tweetsDesired": min(max_items, 50),
+            "addUserInfo": True,
+            "proxyConfig": {
+                "useApifyProxy": True
+            }
         }
         
-        response = requests.post(url, params=params, json=payload, timeout=60)
+        response = requests.post(url, params=params, json=payload, timeout=120)
         response.raise_for_status()
         
         tweets = response.json()
         articles = []
         
         for tweet in tweets:
-            created_at = tweet.get('created_at', '')
+            # Handle different response formats
+            created_at = tweet.get('created_at', tweet.get('createdAt', ''))
+            full_text = tweet.get('full_text', tweet.get('text', tweet.get('tweet', '')))
             
-            articles.append({
-                "search_name": search_name,
-                "search_query": query,
-                "title": tweet.get('full_text', tweet.get('text', ''))[:280],
-                "published": created_at,
-                "link": f"https://twitter.com/{tweet.get('user', {}).get('screen_name', 'unknown')}/status/{tweet.get('id_str', '')}",
-                "source": f"twitter_apify_{tweet.get('user', {}).get('screen_name', 'unknown')}",
-                "description": tweet.get('full_text', ''),
-                "author": tweet.get('user', {}).get('screen_name', ''),
-                "retweet_count": tweet.get('retweet_count', 0),
-                "favorite_count": tweet.get('favorite_count', 0),
-            })
+            # Get user info (may be nested or flat)
+            user = tweet.get('user', {})
+            screen_name = user.get('screen_name', tweet.get('screen_name', tweet.get('username', 'unknown')))
+            
+            # Get tweet ID
+            tweet_id = tweet.get('id_str', tweet.get('id', tweet.get('tweetId', '')))
+            
+            if full_text:  # Only add if we have content
+                articles.append({
+                    "search_name": search_name,
+                    "search_query": query,
+                    "title": full_text[:280],
+                    "published": created_at,
+                    "link": f"https://twitter.com/{screen_name}/status/{tweet_id}" if tweet_id else "",
+                    "source": f"twitter_apify_{screen_name}",
+                    "description": full_text,
+                    "author": screen_name,
+                    "retweet_count": tweet.get('retweet_count', tweet.get('retweetCount', 0)),
+                    "favorite_count": tweet.get('favorite_count', tweet.get('likeCount', 0)),
+                })
         
         return articles
         
+    except requests.exceptions.Timeout:
+        print(f"Timeout fetching Apify Twitter for '{search_name}' (this is normal for complex queries)")
+        return []
     except Exception as e:
         print(f"Error fetching Apify Twitter for '{search_name}': {e}")
         return []
