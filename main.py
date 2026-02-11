@@ -34,9 +34,16 @@ USE_BING_NEWS = os.getenv("USE_BING_NEWS", "false").lower() == "true"
 USE_GDELT = os.getenv("USE_GDELT", "true").lower() == "true"  # Enabled by default (free!)
 EXTRACT_CONTENT = os.getenv("EXTRACT_CONTENT", "true").lower() == "true"  # Article extraction
 
+# Social Media sources (FREE options!)
+USE_APIFY_TWITTER = os.getenv("USE_APIFY_TWITTER", "false").lower() == "true"
+USE_RAPIDAPI_TWITTER = os.getenv("USE_RAPIDAPI_TWITTER", "false").lower() == "true"
+USE_REDDIT = os.getenv("USE_REDDIT", "true").lower() == "true"  # Enabled by default (free!)
+
 # API Keys
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 BING_NEWS_KEY = os.getenv("BING_NEWS_KEY", "")
+APIFY_TOKEN = os.getenv("APIFY_TOKEN", "")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
 
 # Content extraction settings
 MAX_EXTRACT_WORKERS = int(os.getenv("MAX_EXTRACT_WORKERS", "5"))  # Parallel extraction threads
@@ -218,6 +225,38 @@ def parse_search_library(text: str) -> pd.DataFrame:
 # ---------------------------
 # NEWS COLLECTION FUNCTIONS
 # ---------------------------
+
+def create_fallback_query(query: str) -> str | None:
+    """
+    Create a simplified fallback query from a complex boolean query.
+    
+    For queries like: ("Maasmechelen" OR "Hasselt") AND (incident OR protest OR bomb)
+    Returns: "Maasmechelen" OR "Hasselt"
+    
+    This helps get results for local searches where the full boolean is too restrictive.
+    """
+    # If query doesn't have AND, no need for fallback
+    if ' AND ' not in query.upper():
+        return None
+    
+    # Try to extract the first parenthetical group (usually location names)
+    # Pattern: ("term1" OR "term2" OR ...) AND ...
+    match = re.search(r'\(([^)]+)\)\s*AND', query, re.IGNORECASE)
+    if match:
+        location_part = match.group(1).strip()
+        # Clean up and return just the locations
+        return f"({location_part})"
+    
+    # Alternative: split on AND and take the first part
+    parts = re.split(r'\s+AND\s+', query, flags=re.IGNORECASE)
+    if len(parts) >= 2:
+        first_part = parts[0].strip()
+        # Only use if it looks like it has location terms
+        if first_part and len(first_part) > 3:
+            return first_part
+    
+    return None
+
 
 def google_news_rss_url(query: str, past_days: int, hl: str, gl: str, ceid: str) -> str:
     """Generate Google News RSS URL."""
@@ -437,6 +476,237 @@ def fetch_gdelt(search_name: str, query: str, hours_back: int, max_items: int = 
         return []
 
 
+# ---------------------------
+# SOCIAL MEDIA FUNCTIONS (FREE!)
+# ---------------------------
+
+def fetch_apify_twitter(search_name: str, query: str, hours_back: int, max_items: int = 50) -> list[dict]:
+    """
+    Fetch tweets using Apify Twitter Scraper (FREE tier available).
+    
+    To enable:
+    1. Sign up at https://apify.com (free account)
+    2. Get your API token from Settings > Integrations
+    3. Set environment variable: APIFY_TOKEN=your_token
+    4. Set environment variable: USE_APIFY_TWITTER=true
+    
+    Free tier: ~50 Actor runs/month
+    """
+    if not APIFY_TOKEN:
+        return []
+    
+    try:
+        # Clean query for Twitter search
+        clean_query = query
+        clean_query = re.sub(r'\bAND\b', '', clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r'\bOR\b', ' OR ', clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r'[()]', '', clean_query)
+        clean_query = ' '.join(clean_query.split())[:200]  # Twitter search limit
+        
+        # Apify Twitter Scraper API
+        # Using the lightweight scraper that works without Twitter API
+        url = "https://api.apify.com/v2/acts/apidojo~tweet-scraper/run-sync-get-dataset-items"
+        
+        params = {
+            'token': APIFY_TOKEN,
+        }
+        
+        payload = {
+            "searchTerms": [clean_query],
+            "maxTweets": min(max_items, 50),
+            "sort": "Latest",
+        }
+        
+        response = requests.post(url, params=params, json=payload, timeout=60)
+        response.raise_for_status()
+        
+        tweets = response.json()
+        articles = []
+        
+        for tweet in tweets:
+            created_at = tweet.get('created_at', '')
+            
+            articles.append({
+                "search_name": search_name,
+                "search_query": query,
+                "title": tweet.get('full_text', tweet.get('text', ''))[:280],
+                "published": created_at,
+                "link": f"https://twitter.com/{tweet.get('user', {}).get('screen_name', 'unknown')}/status/{tweet.get('id_str', '')}",
+                "source": f"twitter_apify_{tweet.get('user', {}).get('screen_name', 'unknown')}",
+                "description": tweet.get('full_text', ''),
+                "author": tweet.get('user', {}).get('screen_name', ''),
+                "retweet_count": tweet.get('retweet_count', 0),
+                "favorite_count": tweet.get('favorite_count', 0),
+            })
+        
+        return articles
+        
+    except Exception as e:
+        print(f"Error fetching Apify Twitter for '{search_name}': {e}")
+        return []
+
+
+def fetch_rapidapi_twitter(search_name: str, query: str, hours_back: int, max_items: int = 50) -> list[dict]:
+    """
+    Fetch tweets using RapidAPI Twitter Search (FREE tier available).
+    
+    To enable:
+    1. Sign up at https://rapidapi.com (free account)
+    2. Subscribe to "Twitter API v2" or "Twitter135" (free tier)
+    3. Get your API key from the dashboard
+    4. Set environment variable: RAPIDAPI_KEY=your_key
+    5. Set environment variable: USE_RAPIDAPI_TWITTER=true
+    
+    Free tier: ~100-500 requests/month depending on provider
+    """
+    if not RAPIDAPI_KEY:
+        return []
+    
+    try:
+        # Clean query for Twitter search
+        clean_query = query
+        clean_query = re.sub(r'\bAND\b', '', clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r'\bOR\b', ' OR ', clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r'[()]', '', clean_query)
+        clean_query = ' '.join(clean_query.split())[:100]
+        
+        # Using Twitter135 API (popular free option on RapidAPI)
+        url = "https://twitter135.p.rapidapi.com/v2/Search/"
+        
+        headers = {
+            "X-RapidAPI-Key": RAPIDAPI_KEY,
+            "X-RapidAPI-Host": "twitter135.p.rapidapi.com"
+        }
+        
+        params = {
+            "q": clean_query,
+            "count": str(min(max_items, 40)),
+            "cursor": ""
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        articles = []
+        
+        # Parse tweets from response
+        tweets = data.get('data', {}).get('search_by_raw_query', {}).get('search_timeline', {}).get('timeline', {}).get('instructions', [])
+        
+        for instruction in tweets:
+            entries = instruction.get('entries', [])
+            for entry in entries:
+                content = entry.get('content', {})
+                if content.get('entryType') == 'TimelineTimelineItem':
+                    tweet_result = content.get('itemContent', {}).get('tweet_results', {}).get('result', {})
+                    legacy = tweet_result.get('legacy', {})
+                    user = tweet_result.get('core', {}).get('user_results', {}).get('result', {}).get('legacy', {})
+                    
+                    if legacy:
+                        articles.append({
+                            "search_name": search_name,
+                            "search_query": query,
+                            "title": legacy.get('full_text', '')[:280],
+                            "published": legacy.get('created_at', ''),
+                            "link": f"https://twitter.com/{user.get('screen_name', 'unknown')}/status/{legacy.get('id_str', '')}",
+                            "source": f"twitter_rapidapi_{user.get('screen_name', 'unknown')}",
+                            "description": legacy.get('full_text', ''),
+                            "author": user.get('screen_name', ''),
+                            "retweet_count": legacy.get('retweet_count', 0),
+                            "favorite_count": legacy.get('favorite_count', 0),
+                        })
+        
+        return articles
+        
+    except Exception as e:
+        print(f"Error fetching RapidAPI Twitter for '{search_name}': {e}")
+        return []
+
+
+def fetch_reddit(search_name: str, query: str, hours_back: int, max_items: int = 50) -> list[dict]:
+    """
+    Fetch posts from Reddit Search (COMPLETELY FREE, no API key needed!).
+    
+    Uses Reddit's public JSON API which doesn't require authentication
+    for basic search functionality.
+    
+    To enable: Set USE_REDDIT=true (enabled by default)
+    """
+    try:
+        # Clean query for Reddit search
+        clean_query = query
+        clean_query = re.sub(r'\bAND\b', ' ', clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r'\bOR\b', ' OR ', clean_query, flags=re.IGNORECASE)
+        clean_query = re.sub(r'["\(\)]', '', clean_query)
+        clean_query = ' '.join(clean_query.split())[:200]
+        
+        # Reddit public JSON API - use old.reddit.com which is more permissive
+        url = "https://old.reddit.com/search.json"
+        
+        # Use a browser-like User-Agent to avoid blocks
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        
+        # Time filter based on hours_back
+        if hours_back <= 24:
+            time_filter = "day"
+        elif hours_back <= 168:
+            time_filter = "week"
+        else:
+            time_filter = "month"
+        
+        params = {
+            "q": clean_query,
+            "sort": "new",
+            "t": time_filter,
+            "limit": min(max_items, 100),
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        articles = []
+        
+        for post in data.get('data', {}).get('children', []):
+            post_data = post.get('data', {})
+            
+            # Convert Unix timestamp to ISO format
+            created_utc = post_data.get('created_utc', 0)
+            if created_utc:
+                pub_dt = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+                published = pub_dt.isoformat()
+            else:
+                published = ''
+            
+            # Build the post URL
+            permalink = post_data.get('permalink', '')
+            post_url = f"https://www.reddit.com{permalink}" if permalink else ''
+            
+            articles.append({
+                "search_name": search_name,
+                "search_query": query,
+                "title": post_data.get('title', ''),
+                "published": published,
+                "link": post_url,
+                "source": f"reddit_r/{post_data.get('subreddit', 'unknown')}",
+                "description": post_data.get('selftext', '')[:500] if post_data.get('selftext') else '',
+                "author": post_data.get('author', ''),
+                "score": post_data.get('score', 0),
+                "num_comments": post_data.get('num_comments', 0),
+                "subreddit": post_data.get('subreddit', ''),
+            })
+        
+        return articles
+        
+    except Exception as e:
+        print(f"Error fetching Reddit for '{search_name}': {e}")
+        return []
+
+
 def extract_article_content(url: str, timeout: int = 10) -> dict:
     """
     Extract full article content from a URL using trafilatura.
@@ -554,6 +824,9 @@ def collect_all_news(df_searches: pd.DataFrame, past_days: int, lookback_hours: 
     - NewsAPI (if USE_NEWSAPI=true and NEWSAPI_KEY is set)
     - Bing News (if USE_BING_NEWS=true and BING_NEWS_KEY is set)
     - GDELT (if USE_GDELT=true, FREE - no API key needed!)
+    - Twitter/X via Apify (if USE_APIFY_TWITTER=true and APIFY_TOKEN is set)
+    - Twitter/X via RapidAPI (if USE_RAPIDAPI_TWITTER=true and RAPIDAPI_KEY is set)
+    - Reddit (if USE_REDDIT=true, FREE - no API key needed!)
     
     Then optionally extracts full article content using trafilatura.
     """
@@ -562,12 +835,20 @@ def collect_all_news(df_searches: pd.DataFrame, past_days: int, lookback_hours: 
     print(f"\n{'='*60}")
     print(f"Starting news collection:")
     print(f"  - Total searches: {len(df_searches)}")
+    print(f"  NEWS SOURCES:")
     print(f"  - Google News RSS: ENABLED")
     print(f"  - NewsAPI: {'ENABLED' if USE_NEWSAPI and NEWSAPI_KEY else 'DISABLED'}")
     print(f"  - Bing News: {'ENABLED' if USE_BING_NEWS and BING_NEWS_KEY else 'DISABLED'}")
     print(f"  - GDELT: {'ENABLED' if USE_GDELT else 'DISABLED'}")
+    print(f"  SOCIAL MEDIA:")
+    print(f"  - Twitter (Apify): {'ENABLED' if USE_APIFY_TWITTER and APIFY_TOKEN else 'DISABLED'}")
+    print(f"  - Twitter (RapidAPI): {'ENABLED' if USE_RAPIDAPI_TWITTER and RAPIDAPI_KEY else 'DISABLED'}")
+    print(f"  - Reddit: {'ENABLED' if USE_REDDIT else 'DISABLED'}")
+    print(f"  OTHER:")
     print(f"  - Content Extraction: {'ENABLED' if EXTRACT_CONTENT else 'DISABLED'}")
     print(f"{'='*60}\n")
+    
+    fallback_count = 0  # Track how many fallback searches were used
     
     for idx, row in df_searches.iterrows():
         search_name = row["search_name"]
@@ -575,28 +856,103 @@ def collect_all_news(df_searches: pd.DataFrame, past_days: int, lookback_hours: 
         
         print(f"[{idx+1}/{len(df_searches)}] Processing: {search_name[:50]}...")
         
+        search_total = 0  # Track total articles for this search
+        
         # Always try Google News RSS
         rss_articles = fetch_google_news_rss(search_name, query, past_days, max_items)
         all_articles.extend(rss_articles)
+        search_total += len(rss_articles)
         print(f"  ├─ Google RSS: {len(rss_articles)} articles")
         
         # Try NewsAPI if enabled
         if USE_NEWSAPI and NEWSAPI_KEY:
             api_articles = fetch_newsapi(search_name, query, lookback_hours, max_items)
             all_articles.extend(api_articles)
+            search_total += len(api_articles)
             print(f"  ├─ NewsAPI: {len(api_articles)} articles")
         
         # Try Bing News if enabled
         if USE_BING_NEWS and BING_NEWS_KEY:
             bing_articles = fetch_bing_news(search_name, query, lookback_hours, max_items)
             all_articles.extend(bing_articles)
+            search_total += len(bing_articles)
             print(f"  ├─ Bing News: {len(bing_articles)} articles")
         
         # Try GDELT if enabled (FREE - no API key needed!)
         if USE_GDELT:
             gdelt_articles = fetch_gdelt(search_name, query, lookback_hours, max_items)
             all_articles.extend(gdelt_articles)
-            print(f"  └─ GDELT: {len(gdelt_articles)} articles")
+            search_total += len(gdelt_articles)
+            print(f"  ├─ GDELT: {len(gdelt_articles)} articles")
+        
+        # Try Twitter via Apify if enabled
+        if USE_APIFY_TWITTER and APIFY_TOKEN:
+            apify_articles = fetch_apify_twitter(search_name, query, lookback_hours, max_items)
+            all_articles.extend(apify_articles)
+            search_total += len(apify_articles)
+            print(f"  ├─ Twitter (Apify): {len(apify_articles)} tweets")
+        
+        # Try Twitter via RapidAPI if enabled
+        if USE_RAPIDAPI_TWITTER and RAPIDAPI_KEY:
+            rapidapi_articles = fetch_rapidapi_twitter(search_name, query, lookback_hours, max_items)
+            all_articles.extend(rapidapi_articles)
+            search_total += len(rapidapi_articles)
+            print(f"  ├─ Twitter (RapidAPI): {len(rapidapi_articles)} tweets")
+        
+        # Try Reddit if enabled (FREE!)
+        if USE_REDDIT:
+            reddit_articles = fetch_reddit(search_name, query, lookback_hours, max_items)
+            all_articles.extend(reddit_articles)
+            search_total += len(reddit_articles)
+            print(f"  ├─ Reddit: {len(reddit_articles)} posts")
+        
+        # FALLBACK: If no results from any source, try a relaxed query
+        if search_total == 0:
+            fallback_query = create_fallback_query(query)
+            if fallback_query:
+                print(f"  ├─ ⚠️  No results! Trying fallback query...")
+                fallback_count += 1
+                
+                # Try fallback with Google RSS
+                fallback_rss = fetch_google_news_rss(
+                    f"{search_name} (fallback)", 
+                    fallback_query, 
+                    past_days, 
+                    max_items
+                )
+                all_articles.extend(fallback_rss)
+                
+                # Try fallback with GDELT if enabled
+                fallback_gdelt = []
+                if USE_GDELT:
+                    fallback_gdelt = fetch_gdelt(
+                        f"{search_name} (fallback)", 
+                        fallback_query, 
+                        lookback_hours, 
+                        max_items
+                    )
+                    all_articles.extend(fallback_gdelt)
+                
+                # Try fallback with Reddit if enabled
+                fallback_reddit = []
+                if USE_REDDIT:
+                    fallback_reddit = fetch_reddit(
+                        f"{search_name} (fallback)",
+                        fallback_query,
+                        lookback_hours,
+                        max_items
+                    )
+                    all_articles.extend(fallback_reddit)
+                
+                total_fallback = len(fallback_rss) + len(fallback_gdelt) + len(fallback_reddit)
+                print(f"  └─ 🔄 Fallback: {total_fallback} articles (query: {fallback_query[:50]}...)")
+            else:
+                print(f"  └─ ⚠️  No results and no fallback available")
+        else:
+            print(f"  └─ Total: {search_total} articles")
+    
+    if fallback_count > 0:
+        print(f"\n📊 Used fallback searches for {fallback_count} queries with no results")
     
     df = pd.DataFrame(all_articles)
     

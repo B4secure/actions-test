@@ -7,9 +7,27 @@ on:
   workflow_dispatch:
     inputs:
       use_gdelt:
-        description: 'Enable GDELT data source'
+        description: 'Enable GDELT data source (FREE)'
         required: false
         default: 'true'
+        type: choice
+        options: ['true', 'false']
+      use_reddit:
+        description: 'Enable Reddit search (FREE)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      use_apify_twitter:
+        description: 'Enable Twitter via Apify (requires APIFY_TOKEN secret)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+      use_rapidapi_twitter:
+        description: 'Enable Twitter via RapidAPI (requires RAPIDAPI_KEY secret)'
+        required: false
+        default: 'false'
         type: choice
         options: ['true', 'false']
       extract_content:
@@ -19,7 +37,7 @@ on:
         type: choice
         options: ['true', 'false']
       use_newsapi:
-        description: 'Enable NewsAPI (requires secret)'
+        description: 'Enable NewsAPI (requires NEWSAPI_KEY secret)'
         required: false
         default: 'false'
         type: choice
@@ -69,10 +87,16 @@ jobs:
           python main.py
         env:
           LOOKBACK_HOURS: ${{ env.LOOKBACK_HOURS }}
-          # Data sources
+          # News data sources
           USE_GDELT: ${{ github.event.inputs.use_gdelt || 'true' }}
           USE_NEWSAPI: ${{ github.event.inputs.use_newsapi || 'false' }}
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          # Social media sources (FREE options!)
+          USE_REDDIT: ${{ github.event.inputs.use_reddit || 'true' }}
+          USE_APIFY_TWITTER: ${{ github.event.inputs.use_apify_twitter || 'false' }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          USE_RAPIDAPI_TWITTER: ${{ github.event.inputs.use_rapidapi_twitter || 'false' }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
           # Content extraction
           EXTRACT_CONTENT: ${{ github.event.inputs.extract_content || 'true' }}
           MAX_EXTRACT_WORKERS: "5"
