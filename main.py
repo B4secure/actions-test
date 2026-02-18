@@ -23,7 +23,27 @@ from sklearn.metrics.pairwise import cosine_similarity
 # CONFIG (can be overridden by GitHub Actions env vars)
 # ---------------------------
 PAST_DAYS = int(os.getenv("PAST_DAYS", "1"))
-LOOKBACK_HOURS = int((os.getenv("LOOKBACK_HOURS") or "18").strip())
+def _get_lookback_hours() -> int:
+    """Return lookback hours based on time of day.
+    - 7am run: look back to 2pm previous day (~17 hours)
+    - 2pm run: look back to 7am same day (~7 hours)
+    """
+    override = os.getenv("LOOKBACK_HOURS", "").strip()
+    if override:
+        return int(override)
+    
+    now_utc = datetime.now(timezone.utc)
+    current_hour = now_utc.hour  # 0-23 UTC
+    
+    # Adjust if your GitHub Actions runs are in a different timezone
+    # 7am UTC run → look back ~17h to previous day 2pm UTC
+    # 2pm UTC run → look back ~7h to same day 7am UTC
+    if current_hour < 12:  # Morning run (7am)
+        return 17
+    else:  # Afternoon run (2pm)
+        return 7
+
+LOOKBACK_HOURS = _get_lookback_hours()
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "30"))
 DUP_THRESHOLD = float(os.getenv("DUP_THRESHOLD", "0.7"))
 MODEL_NAME = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
