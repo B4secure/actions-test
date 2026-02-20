@@ -13,6 +13,8 @@ import numpy as np
 import requests
 from dateutil import parser as dateparser
 import trafilatura
+from deep_translator import GoogleTranslator
+from langdetect import detect, LangDetectException
 
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -21,12 +23,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 # ---------------------------
 # CONFIG
 # ---------------------------
-PAST_DAYS       = int(os.getenv("PAST_DAYS", "1"))
+PAST_DAYS       = int(os.getenv("PAST_DAYS", "1"))      # ← 2 so RSS fetches wide, time filter trims precisely
 LOOKBACK_HOURS  = int((os.getenv("LOOKBACK_HOURS") or "24").strip())
 MAX_ITEMS       = int(os.getenv("MAX_ITEMS", "30"))
 DUP_THRESHOLD   = float(os.getenv("DUP_THRESHOLD", "0.7"))
 MODEL_NAME      = os.getenv("MODEL_NAME", "all-MiniLM-L6-v2")
-EXTRACT_CONTENT = os.getenv("EXTRACT_CONTENT", "false").lower() == "true"  # OFF by default
+EXTRACT_CONTENT = os.getenv("EXTRACT_CONTENT", "false").lower() == "true"
+TRANSLATE_TITLES = os.getenv("TRANSLATE_TITLES", "true").lower() == "true"
 MAX_EXTRACT_WORKERS = int(os.getenv("MAX_EXTRACT_WORKERS", "5"))
 EXTRACT_TIMEOUT     = int(os.getenv("EXTRACT_TIMEOUT", "15"))
 
@@ -58,55 +61,51 @@ DATA_DIR.mkdir(exist_ok=True)
 
 
 # ---------------------------
-# SEARCH LIBRARY
-# Google News RSS only — cleaned up & tightened.
-# Removed: brand boycott/protest (too noisy/irrelevant), Reddit, GDELT, Twitter.
-# Village searches now use (village name) AND (incident/news/event) so RSS
-# has something to match on, with a broader fallback if still 0 results.
+# SEARCH LIBRARY  (v3 — tightened to reduce noise)
 # ---------------------------
 SEARCH_LIBRARY_TEXT = r"""
 Value Retail Brand	"Value Retail" OR "Bicester Collection" OR "Chic Outlet Shopping"
 BV Value Retail Crime	("Bicester Village") AND ("money laundering" OR "gang" OR "criminal" OR "fraud" OR "counterfeit")
-BV Logistics Disruption	("DHL" OR "UPS" OR "DPD" OR "FedEx" OR "Royal Mail" OR "Parcelforce" OR "EVRI" OR "Dropit") AND (disruption OR strike OR failure OR delay) AND ("UK" OR "United Kingdom" OR "Britain")
-PETA Broad Search	"PETA" AND ("Italy" OR "UK" OR "Germany" OR "Belgium" OR "Spain" OR "France") AND ("fashion" OR "designer" OR "retail" OR "luxury") AND (protest OR rally OR demonstration OR campaign)
-PETA Village Search	("PETA") AND ("Ingolstadt" OR "Kildare" OR "Vallee" OR "Bicester" OR "Wertheim" OR "Las Rozas" OR "La Roca" OR "Fidenza" OR "Maasmechelen")
-XR JSO Village Search	("Extinction Rebellion" OR "Just Stop Oil" OR protest OR demonstration) AND ("Ingolstadt" OR "Kildare" OR "Vallee" OR "Bicester" OR "Wertheim" OR "Las Rozas" OR "La Roca" OR "Fidenza" OR "Maasmechelen")
+BV Logistics Disruption	("DHL" OR "UPS" OR "DPD" OR "FedEx" OR "Royal Mail" OR "Parcelforce" OR "EVRI" OR "Dropit") AND (disruption OR strike OR failure OR delay) AND ("UK" OR "United Kingdom" OR "Britain") AND -dental AND -"pay dispute" AND -"postal vote"
+PETA Broad Search	"PETA" AND ("Italy" OR "UK" OR "Germany" OR "Belgium" OR "Spain" OR "France") AND ("fashion" OR "designer" OR "outlet" OR "luxury retail" OR "shopping village") AND (protest OR rally OR demonstration OR campaign OR action)
+PETA Village Search	("PETA") AND ("Ingolstadt Village" OR "Kildare Village" OR "La Vallee Village" OR "Bicester Village" OR "Wertheim Village" OR "Las Rozas Village" OR "La Roca Village" OR "Fidenza Village" OR "Maasmechelen Village")
+XR JSO Village Search	("Extinction Rebellion" OR "Just Stop Oil" OR "climate protest" OR "environmental protest") AND ("Ingolstadt" OR "Kildare" OR "Vallee" OR "Bicester" OR "Wertheim" OR "Las Rozas" OR "La Roca" OR "Fidenza" OR "Maasmechelen")
 Shoplifting UK	("shoplifting" OR "retail theft" OR "retail crime" OR "shop theft" OR "pickpocket") AND ("UK" OR "England" OR "Britain") AND ("gang" OR "organised" OR "trend" OR "rise" OR "survey" OR "report")
 London Marylebone Incident	("London Marylebone" OR "Marylebone station") AND (incident OR disruption OR closure OR police OR bomb OR explosion OR stabbing OR shooting OR "suspicious package")
-High Level City Belgium Dutch	("Brussels" OR "Antwerp" OR "Maastricht") AND (bom OR bommelding OR "verdacht pakket" OR explosie OR schieten OR steken OR liquidatie)
-High Level City Belgium English	("Brussels" OR "Antwerp" OR "Maastricht") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat")
-High Level City Belgium French	("Bruxelles" OR "Anvers" OR "Maastricht") AND (bombe OR explosion OR fusillade OR poignarder OR "colis suspect" OR "alerte à la bombe")
-Local Town Maasmechelen Dutch	("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (protest OR bom OR bommelding OR explosie OR schieten OR steken OR evacuatie OR politie)
-Local Town Maasmechelen French	("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (manifestation OR bombe OR explosion OR fusillade OR évacuation OR police OR protestation)
-Local Town Maasmechelen English	("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR police OR threat)
-Village Maasmechelen	("Maasmechelen Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-High Level City Germany English	("Frankfurt" OR "Cologne" OR "Munich") AND "Germany" AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat")
-High Level City Germany German	("Frankfurt" OR "Köln" OR "München") AND (Bombe OR Bombendrohung OR Explosion OR Schießerei OR Messerangriff OR "verdächtiges Paket")
-Local Town Wertheim English	("Wertheim" OR "Wurzburg" OR "Aschaffenburg") AND (protest OR bomb OR shooting OR explosion OR stabbing OR "suspicious package" OR evacuation)
-Local Town Wertheim German	("Wertheim" OR "Würzburg" OR "Aschaffenburg") AND (Protest OR Bombe OR Bombendrohung OR Explosion OR Schießerei OR Polizei OR Evakuierung)
-Village Wertheim	("Wertheim Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-Local Town Ingolstadt English	("Ingolstadt") AND (protest OR bomb OR shooting OR explosion OR stabbing OR "suspicious package" OR evacuation)
-Local Town Ingolstadt German	("Ingolstadt") AND (Protest OR Bombe OR Bombendrohung OR Explosion OR Schießerei OR Polizei OR Evakuierung OR Streik)
-Village Ingolstadt	("Ingolstadt Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-High Level City Spain English	("Madrid" OR "Barcelona") AND "Spain" AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat")
-High Level City Spain Spanish	("Madrid" OR "Barcelona") AND (bomba OR explosión OR tiroteo OR puñalada OR "paquete sospechoso" OR "amenaza de bomba")
-Local Town Las Rozas English	("Las Rozas" OR "La Roca" OR "Mataró" OR "Badalona") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR police)
-Local Town Las Rozas Spanish	("Las Rozas" OR "La Roca" OR "Mataró" OR "Badalona") AND (protesta OR bomba OR explosión OR tiroteo OR evacuación OR policía)
-Village Las Rozas La Roca	("Las Rozas Village" OR "La Roca Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-Local Town Bicester Kildare	("Bicester" OR "Kildare" OR "Newbridge") AND (protest OR bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR evacuation OR police)
-Village Bicester Kildare	("Bicester Village" OR "Kildare Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-High Level City UK Ireland	("London" OR "Oxford" OR "Dublin") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat")
-High Level City France English	("Paris" OR "Île-de-France") AND "France" AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat")
-High Level City France French	("Paris" OR "Île-de-France") AND (bombe OR explosion OR fusillade OR poignarder OR "colis suspect" OR "alerte à la bombe")
-Local Town La Vallee French	("Serris" OR "Chessy" OR "Bailly-Romainvilliers" OR "Magny-le-Hongre" OR "Seine-et-Marne") AND (manifestation OR bombe OR explosion OR fusillade OR protestation OR évacuation OR police)
-Local Town La Vallee English	("Serris" OR "Chessy" OR "Bailly-Romainvilliers" OR "Disneyland Paris" OR "Seine-et-Marne") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR police)
-Village La Vallee	("La Vallee Village" OR "La Vallée Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-High Level City Italy English	("Milan" OR "Bologna") AND "Italy" AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat")
-High Level City Italy Italian	("Milano" OR "Bologna") AND (bomba OR esplosione OR sparatoria OR accoltellamento OR "pacco sospetto" OR "minaccia bomba")
-Local Town Fidenza English	("Fidenza" OR "Parma" OR "Piacenza" OR "Cremona") AND (protest OR bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR evacuation)
-Local Town Fidenza Italian	("Fidenza" OR "Parma" OR "Piacenza" OR "Cremona") AND (protesta OR bomba OR esplosione OR sparatoria OR accoltellamento OR evacuazione OR polizia)
-Village Fidenza	("Fidenza Village") AND (incident OR news OR event OR opening OR closure OR protest OR crime)
-Roermond Outlet	("Roermond" OR "Designer Outlet Roermond") AND (incident OR protest OR police OR closure OR evacuation OR bomb OR explosion OR stabbing OR shooting)
+High Level City Belgium Dutch	("Brussel" OR "Antwerpen" OR "Maastricht") AND (bom OR bommelding OR "verdacht pakket" OR "onbeheerd pakket" OR explosie OR schietpartij OR steekpartij OR liquidatie OR arrestatie)
+High Level City Belgium English	("Brussels" OR "Antwerp" OR "Maastricht") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror") AND -football AND -soccer AND -transfer
+High Level City Belgium French	("Bruxelles" OR "Anvers" OR "Maastricht") AND (bombe OR explosion OR fusillade OR agression OR couteau OR "colis suspect" OR "alerte à la bombe" OR attentat) AND -football AND -transfert
+Local Town Maasmechelen Dutch	("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (protest OR bom OR bommelding OR explosie OR schietpartij OR steekpartij OR evacuatie OR politie OR arrestatie) AND -sport AND -voetbal
+Local Town Maasmechelen French	("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (manifestation OR bombe OR explosion OR fusillade OR couteau OR évacuation OR police OR arrestation OR protestation)
+Local Town Maasmechelen English	("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR police OR arrest OR threat) AND -sport AND -football
+Village Maasmechelen	("Maasmechelen outlet" OR "Designer Outlet Maasmechelen" OR "Maasmechelen Village")
+High Level City Germany English	("Frankfurt" OR "Cologne" OR "Munich") AND "Germany" AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror attack") AND -football AND -soccer AND -Bundesliga AND -Bayern AND -weather AND -snow AND -strike AND -"bomb cyclone"
+High Level City Germany German	("Frankfurt" OR "Köln" OR "München") AND (Bombe OR Bombendrohung OR Explosion OR Schießerei OR Messerangriff OR Terroranschlag OR "verdächtiges Paket") AND -Fußball AND -Bundesliga AND -Bayern AND -Wetter
+Local Town Wertheim English	("Wertheim outlet" OR "Designer Outlet Wertheim" OR "Wertheim Village" OR "Wertheim Germany") AND (protest OR bomb OR shooting OR explosion OR stabbing OR "suspicious package" OR evacuation OR police OR news)
+Local Town Wertheim German	("Wertheim" OR "Würzburg" OR "Aschaffenburg") AND (Protest OR Bombe OR Bombendrohung OR Explosion OR Schießerei OR Polizei OR Evakuierung OR Terrorverdacht) AND -Wetter AND -Schnee
+Village Wertheim	("Wertheim outlet" OR "Designer Outlet Wertheim" OR "Wertheim Village")
+Local Town Ingolstadt English	("Ingolstadt outlet" OR "Designer Outlet Ingolstadt" OR "Ingolstadt Village") AND (protest OR bomb OR shooting OR explosion OR stabbing OR "suspicious package" OR evacuation OR police OR news)
+Local Town Ingolstadt German	("Ingolstadt") AND (Protest OR Bombe OR Bombendrohung OR Explosion OR Schießerei OR Polizei OR Evakuierung OR Terrorverdacht) AND -Audi AND -Auto AND -Wetter
+Village Ingolstadt	("Ingolstadt outlet" OR "Designer Outlet Ingolstadt" OR "Ingolstadt Village")
+High Level City Spain English	("Madrid" OR "Barcelona") AND "Spain" AND ("bomb threat" OR "suspicious package" OR "stabbing attack" OR "shooting attack" OR "terror attack" OR "police operation" OR "evacuation") AND -football AND -soccer AND -transfer AND -signing AND -LaLiga AND -"Champions League" AND -"Real Madrid" AND -"Atletico"
+High Level City Spain Spanish	("Madrid" OR "Barcelona") AND ("amenaza de bomba" OR "paquete sospechoso" OR "paquete explosivo" OR "ataque con cuchillo" OR "tiroteo" OR "atentado" OR "operación policial" OR "evacuación" OR "artefacto explosivo") AND -fútbol AND -fichaje AND -Liga AND -transferencia
+Local Town Las Rozas English	("Las Rozas" OR "La Roca del Vallès" OR "Mataró" OR "Badalona") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR "police operation" OR arrest) AND -football AND -transfer
+Local Town Las Rozas Spanish	("Las Rozas" OR "La Roca del Vallès" OR "Mataró" OR "Badalona") AND (protesta OR "amenaza de bomba" OR explosión OR tiroteo OR acuchillamiento OR evacuación OR "operación policial" OR detención) AND -fútbol AND -fichaje
+Village Las Rozas La Roca	("Las Rozas outlet" OR "La Roca outlet" OR "Las Rozas Village" OR "La Roca Village")
+Local Town Bicester Kildare	("Bicester" OR "Kildare" OR "Newbridge") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror" OR "police operation") AND -"petrol bomb" AND -sport AND -GAA AND -football
+Village Bicester Kildare	("Bicester Village" OR "Kildare Village" OR "Bicester outlet" OR "Kildare outlet")
+High Level City UK Ireland	("London" OR "Dublin") AND ("terror" OR "bomb threat" OR "suspicious package" OR "police operation" OR "counter terrorism" OR "stabbing attack" OR "shooting incident") AND -"bomb squad" AND -film AND -movie AND -filming AND -"New London" AND -Connecticut
+High Level City France English	("Paris" OR "Île-de-France") AND "France" AND ("bomb threat" OR "suspicious package" OR "shooting" OR "stabbing" OR "terror attack" OR "police operation" OR evacuation) AND -Texas AND -"Paris, Texas" AND -film AND -movie AND -football AND -transfer
+High Level City France French	("Paris" OR "Île-de-France") AND ("alerte à la bombe" OR "colis suspect" OR "menace à la bombe" OR fusillade OR "attentat" OR "attaque au couteau" OR "opération de police" OR évacuation) AND -immobilier AND -"prix immobilier" AND -foot AND -transfert AND -Texas
+Local Town La Vallee French	("Serris" OR "Chessy" OR "Bailly-Romainvilliers" OR "Magny-le-Hongre" OR "Seine-et-Marne") AND (manifestation OR "alerte à la bombe" OR "colis suspect" OR bombe OR fusillade OR couteau OR protestation OR évacuation OR attentat OR "opération de police")
+Local Town La Vallee English	("Serris" OR "Chessy" OR "Bailly-Romainvilliers" OR "Disneyland Paris" OR "Seine-et-Marne") AND (protest OR "bomb threat" OR "suspicious package" OR explosion OR shooting OR stabbing OR evacuation OR "police operation") AND -"theme park ride" AND -"park closure"
+Village La Vallee	("La Vallee outlet" OR "Val d'Europe outlet" OR "La Vallée Village" OR "La Vallee Village")
+High Level City Italy English	("Milan" OR "Bologna") AND "Italy" AND ("bomb threat" OR "suspicious package" OR "stabbing attack" OR "shooting" OR "terror attack" OR "police operation" OR explosion OR evacuation) AND -Olympics AND -biathlon AND -skiing AND -skating AND -Cortina AND -"Winter Games" AND -"Winter Olympics" AND -curling AND -hockey AND -football AND -transfer AND -Serie
+High Level City Italy Italian	("Milano" OR "Bologna") AND ("minaccia bomba" OR "pacco sospetto" OR "pacco esplosivo" OR sparatoria OR accoltellamento OR "attentato" OR "operazione di polizia" OR esplosione OR evacuazione) AND -Olimpiadi AND -pattinaggio AND -sci AND -Cortina AND -calcio AND -Serie AND -mercato
+Local Town Fidenza English	("Fidenza outlet" OR "Designer Outlet Fidenza" OR "Fidenza Village" OR "Parma" OR "Piacenza" OR "Cremona") AND (protest OR bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR evacuation OR "police operation") AND -football AND -transfer
+Local Town Fidenza Italian	("Fidenza" OR "Parma" OR "Piacenza" OR "Cremona") AND (protesta OR "minaccia bomba" OR esplosione OR sparatoria OR accoltellamento OR evacuazione OR "operazione di polizia" OR arresto) AND -calcio AND -Serie AND -mercato
+Village Fidenza	("Fidenza outlet" OR "Designer Outlet Fidenza" OR "Fidenza Village")
+Roermond Outlet	("Designer Outlet Roermond" OR "Roermond outlet" OR "Roermond shopping")
 """.strip()
 
 
@@ -115,6 +114,7 @@ Roermond Outlet	("Roermond" OR "Designer Outlet Roermond") AND (incident OR prot
 # When a village search still returns 0, broaden to location name only.
 # ---------------------------
 VILLAGE_FALLBACK_MAP = {
+    # Village outlet searches — fallback drops event terms, keeps outlet name only
     r"village maasmechelen":          '("Maasmechelen Village" OR "Maasmechelen") AND (shopping OR outlet OR luxury OR retail OR news)',
     r"village wertheim":              '("Wertheim Village" OR "Wertheim") AND (shopping OR outlet OR luxury OR retail OR news)',
     r"village ingolstadt":            '("Ingolstadt Village" OR "Ingolstadt") AND (shopping OR outlet OR luxury OR retail OR news)',
@@ -122,8 +122,19 @@ VILLAGE_FALLBACK_MAP = {
     r"village bicester|kildare":      '("Bicester Village" OR "Kildare Village" OR "Bicester" OR "Kildare") AND (shopping OR outlet OR luxury OR retail OR news)',
     r"village la val":                '("La Vallee Village" OR "La Vallée Village" OR "Serris" OR "Chessy") AND (shopping OR outlet OR luxury OR retail OR news)',
     r"village fidenza":               '("Fidenza Village" OR "Fidenza") AND (shopping OR outlet OR luxury OR retail OR news)',
+    # Local town English fallbacks — anchor to outlet name so results stay relevant
+    r"local town wertheim english":     '("Wertheim outlet" OR "Designer Outlet Wertheim" OR "Wertheim Germany")',
+    r"local town ingolstadt english":   '("Ingolstadt outlet" OR "Designer Outlet Ingolstadt")',
+    r"local town las rozas english":    '("Las Rozas outlet" OR "La Roca outlet" OR "Las Rozas Village" OR "La Roca Village")',
+    r"local town bicester kildare":     '("Bicester Village" OR "Kildare Village" OR "Bicester outlet" OR "Kildare outlet")',
+    r"local town la vallee english":    '("La Vallee outlet" OR "Val d\'Europe" OR "Disneyland Paris") AND (news OR incident OR police OR closure)',
+    r"local town fidenza english":      '("Fidenza outlet" OR "Designer Outlet Fidenza" OR "Parma") AND (news OR incident OR police)',
+    # PETA — stays scoped to retail/luxury context
+    r"peta broad search":               '"PETA" AND ("outlet" OR "luxury" OR "shopping" OR "fashion" OR "fur" OR "leather") AND (protest OR campaign OR action)',
+    r"peta village search":             '"PETA" AND ("designer outlet" OR "outlet village" OR "luxury shopping") AND (protest OR campaign OR demonstration)',
+    # Roermond
+    r"roermond outlet":                 '("Designer Outlet Roermond" OR "Roermond outlet" OR "Roermond shopping")',
 }
-
 
 # ---------------------------
 # HELPERS
@@ -185,16 +196,11 @@ def parse_search_library(text: str) -> pd.DataFrame:
 # ---------------------------
 
 def create_fallback_query(search_name: str, query: str) -> str | None:
-    """
-    1. Village searches  -> VILLAGE_FALLBACK_MAP (explicit broader query)
-    2. AND-queries       -> strip event terms, keep first location group
-    """
-    # Strategy 1: explicit village fallback
+    name_lower = search_name.lower()
     for pattern, fb_query in VILLAGE_FALLBACK_MAP.items():
-        if re.search(pattern, search_name, flags=re.IGNORECASE):
+        if re.search(pattern, name_lower, flags=re.IGNORECASE):
             return fb_query
 
-    # Strategy 2: strip AND clauses, keep location group
     if ' AND ' not in query.upper():
         return None
 
@@ -250,7 +256,8 @@ def extract_article_content(url: str, timeout: int = 10) -> dict:
         downloaded = trafilatura.fetch_url(url)
         if not downloaded:
             return {"content": None, "extraction_error": "Failed to download"}
-        content  = trafilatura.extract(downloaded, include_comments=False, include_tables=True, no_fallback=False, favor_precision=True)
+        content  = trafilatura.extract(downloaded, include_comments=False, include_tables=True,
+                                       no_fallback=False, favor_precision=True)
         metadata = trafilatura.extract_metadata(downloaded)
         return {
             "content":          content,
@@ -298,6 +305,52 @@ def extract_content_batch(df: pd.DataFrame, max_workers: int = 5) -> pd.DataFram
     return df
 
 
+def translate_titles_batch(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds a 'title_en' column with English translations.
+    - English titles are copied as-is
+    - Non-English titles are translated via Google Translate (free, no API key)
+    - Falls back to original title if translation fails
+    """
+    if df.empty or "title" not in df.columns:
+        return df
+
+    print(f"\nTranslating {len(df)} titles to English...")
+    translator = GoogleTranslator(source="auto", target="en")
+    titles_en  = []
+    translated = 0
+    errors     = 0
+
+    for title in df["title"].fillna("").astype(str):
+        if not title.strip():
+            titles_en.append("")
+            continue
+        try:
+            lang = detect(title)
+        except LangDetectException:
+            lang = "en"
+
+        if lang == "en":
+            titles_en.append(title)
+            continue
+
+        try:
+            result = translator.translate(title)
+            titles_en.append(result if result else title)
+            translated += 1
+        except Exception:
+            titles_en.append(title)   # fall back to original
+            errors += 1
+
+    df = df.copy()
+    # Insert title_en right after title column
+    title_idx = df.columns.get_loc("title")
+    df.insert(title_idx + 1, "title_en", titles_en)
+
+    print(f"✅ Translation: {translated} translated, {len(df)-translated-errors} already English, {errors} errors")
+    return df
+
+
 # ---------------------------
 # MAIN COLLECTION
 # ---------------------------
@@ -308,7 +361,7 @@ def collect_all_news(df_searches: pd.DataFrame, past_days: int, lookback_hours: 
 
     print(f"\n{'='*60}")
     print(f"NEWS COLLECTION  —  Google News RSS only")
-    print(f"  Searches: {len(df_searches)}  |  Window: {lookback_hours}h  |  Max per search: {max_items}")
+    print(f"  Searches: {len(df_searches)}  |  Window: {lookback_hours}h  |  PAST_DAYS: {past_days}  |  Max: {max_items}")
     print(f"{'='*60}\n")
 
     for idx, row in df_searches.iterrows():
@@ -350,6 +403,9 @@ def collect_all_news(df_searches: pd.DataFrame, past_days: int, lookback_hours: 
 
     if EXTRACT_CONTENT:
         df = extract_content_batch(df, max_workers=MAX_EXTRACT_WORKERS)
+
+    if TRANSLATE_TITLES:
+        df = translate_titles_batch(df)
 
     return df
 
@@ -450,7 +506,7 @@ def semantic_dedupe(infile: str, out_clean: str, out_audit: str, threshold: floa
     df_clean.to_excel(out_clean, index=False, engine="openpyxl")
 
     removed = original_count - len(df_clean)
-    print(f"\n✅ Dedup: {original_count} → {len(df_clean)} articles ({removed} removed, {removed/original_count*100:.1f}% reduction)")
+    print(f"\n✅ Dedup: {original_count} → {len(df_clean)} ({removed} removed, {removed/original_count*100:.1f}% reduction)")
     return original_count, len(df_clean)
 
 
@@ -515,7 +571,6 @@ def main():
         print(f"✓ Deduplicated file: {dedup_file}")
         print(f"✓ Latest file:       {latest}")
 
-    # ── Summary ──────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print("SUMMARY")
     print(f"{'='*60}")
@@ -534,4 +589,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
