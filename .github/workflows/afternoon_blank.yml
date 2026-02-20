@@ -1,4 +1,4 @@
-name: Daily News Collection
+name: Daily News Collection_afternoon
 on:
   schedule:
     - cron: "0 14 * * *"   
@@ -87,7 +87,7 @@ jobs:
 
       # ── 6. Run the collector ───────────────────────────────────────────
       - name: Run news collector
-        run: python main.py
+        run: python main_afternoon.py
         env:
           LOOKBACK_HOURS:  ${{ env.LOOKBACK_HOURS }}
           PAST_DAYS:       ${{ env.PAST_DAYS }}
