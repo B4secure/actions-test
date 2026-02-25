@@ -2,31 +2,7 @@ name: Daily News Collection_afternoon
 on:
   schedule:
     - cron: "0 14 * * *"   
-  workflow_dispatch:
-    inputs:
-      lookback_hours:
-        description: 'Hours to look back for articles (default 24)'
-        required: false
-        default: '7'
-      past_days:
-        description: 'Days passed to Google RSS when: filter (default 2)'
-        required: false
-        default: '1'
-        type: choice
-        options: ['1', '2', '3']
-      max_items:
-        description: 'Max articles per search query (default 30)'
-        required: false
-        default: '30'
-        type: choice
-        options: ['15', '30']
-      dup_threshold:
-        description: 'Semantic dedup similarity threshold (lower = more aggressive)'
-        required: false
-        default: '0.7'
-        type: choice
-        options: ['0.6', '0.7', '0.8']
-
+  
 permissions:
   contents: write
 
@@ -67,8 +43,8 @@ jobs:
       - name: Resolve config
         run: |
           # Scheduled run defaults
-          LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours || '24' }}"
-          PAST_DAYS="${{ github.event.inputs.past_days || '2' }}"
+          LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours || '7' }}"
+          PAST_DAYS="${{ github.event.inputs.past_days || '1' }}"
           MAX_ITEMS="${{ github.event.inputs.max_items || '30' }}"
           DUP_THRESHOLD="${{ github.event.inputs.dup_threshold || '0.7' }}"
 
