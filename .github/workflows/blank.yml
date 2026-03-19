@@ -13,11 +13,11 @@ on:
         type: choice
         options: ['24', '36', '48']
       past_days:
-        description: 'Days passed to Google RSS when: filter (default auto by day)'
+        description: 'Days passed to Google RSS when: filter (default 2)'
         required: false
-        default: ''
+        default: '2'
         type: choice
-        options: ['', '1', '2', '3']
+        options: ['1', '2', '3']
       max_items:
         description: 'Max articles per search query (default 30)'
         required: false
@@ -66,26 +66,15 @@ jobs:
           pip install --no-cache-dir -r requirements.txt
 
       # ── 5. Resolve runtime config ─────────────────────────────────────
-      #    Monday scheduled runs automatically use PAST_DAYS=3.
-      #    All other days use PAST_DAYS=1.
-      #    Manual (workflow_dispatch) runs can override via the dropdown.
-      #    Leaving the dropdown blank keeps the automatic day-based value.
+      #    Scheduled runs always use fixed values.
+      #    Manual (workflow_dispatch) runs use the chosen inputs.
       - name: Resolve config
         run: |
-          DAY_OF_WEEK=$(date +%u)
-          if [ "$DAY_OF_WEEK" = "1" ]; then
-            DEFAULT_PAST_DAYS="3"
-          else
-            DEFAULT_PAST_DAYS="1"
-          fi
-
+          # Scheduled run defaults
           LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours || '24' }}"
+          PAST_DAYS="${{ github.event.inputs.past_days || '2' }}"
           MAX_ITEMS="${{ github.event.inputs.max_items || '30' }}"
           DUP_THRESHOLD="${{ github.event.inputs.dup_threshold || '0.7' }}"
-
-          # Manual override takes priority; blank or missing = use day-based default
-          MANUAL_PAST_DAYS="${{ github.event.inputs.past_days }}"
-          PAST_DAYS="${MANUAL_PAST_DAYS:-$DEFAULT_PAST_DAYS}"
 
           echo "LOOKBACK_HOURS=$LOOKBACK_HOURS" >> $GITHUB_ENV
           echo "PAST_DAYS=$PAST_DAYS"           >> $GITHUB_ENV
@@ -93,7 +82,6 @@ jobs:
           echo "DUP_THRESHOLD=$DUP_THRESHOLD"   >> $GITHUB_ENV
 
           echo "--- Config for this run ---"
-          echo "  DAY_OF_WEEK    : $DAY_OF_WEEK (1=Mon)"
           echo "  LOOKBACK_HOURS : $LOOKBACK_HOURS"
           echo "  PAST_DAYS      : $PAST_DAYS"
           echo "  MAX_ITEMS      : $MAX_ITEMS"
