@@ -3,13 +3,12 @@ name: Daily News Collection
 on:
   schedule:
     - cron: "0 7 * * 2-5"
-      timezone: "Europe/London"
+      timezone: "Europe/London"   # Tue–Fri morning → 24h
     - cron: "0 14 * * 1-5"
-      timezone: "Europe/London"
+      timezone: "Europe/London"   # Mon–Fri afternoon → 7h
     - cron: "0 7 * * 1"
-      timezone: "Europe/London"
-    - cron: "08 14 * * 5"
-      timezone: "Europe/London"
+      timezone: "Europe/London"   # Monday morning → 72h
+
   workflow_dispatch:
     inputs:
       lookback_hours:
@@ -17,89 +16,57 @@ on:
         required: false
         default: ""
         type: string
-        
-
-permissions:
-  contents: write
 
 jobs:
   run:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ────────────────────────────────────────────────────
       - name: Checkout repo
-        uses: actions/checkout@v4.2.2
-        with:
-          persist-credentials: true
+        uses: actions/checkout@v4
 
-      # ── 2. Python ──────────────────────────────────────────────────────
       - name: Set up Python
-        uses: actions/setup-python@v5.4.0
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ── 3. Free disk space (sentence-transformers model can be large) ──
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/lib/android
-          sudo apt-get clean
-
-      # ── 4. Install dependencies ────────────────────────────────────────
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
+          pip install -r requirements.txt
 
-      # ── 5. Resolve runtime config ─────────────────────────────────────
-      #    Scheduled runs always use fixed values.
-      #    Manual (workflow_dispatch) runs use the chosen inputs.
-      
+      # 🔑 CORE FIX: deterministic lookback
       - name: Resolve config
+        shell: bash
         run: |
-          echo "LOOKBACK_HOURS=${{ github.event.inputs.lookback_hours }}" >> $GITHUB_ENV
-          echo "PAST_DAYS=2"       >> $GITHUB_ENV
-          echo "MAX_ITEMS=30"      >> $GITHUB_ENV
-          echo "DUP_THRESHOLD=0.7" >> $GITHUB_ENV
-          echo "--- Trigger: ${{ github.event_name }} ---"
-          echo "--- UTC time: $(date -u) ---"
-          echo "--- LOOKBACK_HOURS value: '${{ github.event.inputs.lookback_hours }}' ---"
-
-      - name: Debug trigger time
-        run: |
-          echo "Event: ${{ github.event_name }}"
+          echo "Trigger: ${{ github.event_name }}"
           echo "Schedule: ${{ github.event.schedule }}"
-          echo "UTC now: $(date -u)"
-          echo "London now: $(TZ=Europe/London date)"
+          echo "UTC: $(date -u)"
+          echo "London: $(TZ=Europe/London date)"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.lookback_hours }}" ]; then
+            LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours }}"
           
-      # ── 6. Run the collector ───────────────────────────────────────────
+          elif [ "${{ github.event.schedule }}" = "0 7 * * 1" ]; then
+            LOOKBACK_HOURS=72   # Monday morning
+
+          elif [ "${{ github.event.schedule }}" = "0 7 * * 2-5" ]; then
+            LOOKBACK_HOURS=24   # Tue-Fri morning
+
+          else
+            LOOKBACK_HOURS=7    # Mon-Fri afternoon
+          fi
+
+          echo "LOOKBACK_HOURS=$LOOKBACK_HOURS" >> $GITHUB_ENV
+          echo "PAST_DAYS=2" >> $GITHUB_ENV
+          echo "MAX_ITEMS=30" >> $GITHUB_ENV
+          echo "DUP_THRESHOLD=0.7" >> $GITHUB_ENV
+
+          echo "FINAL LOOKBACK_HOURS=$LOOKBACK_HOURS"
+
       - name: Run news collector
         run: python main.py
         env:
-          LOOKBACK_HOURS:  ${{ env.LOOKBACK_HOURS }}
-          PAST_DAYS:       ${{ env.PAST_DAYS }}
-          MAX_ITEMS:       ${{ env.MAX_ITEMS }}
-          DUP_THRESHOLD:   ${{ env.DUP_THRESHOLD }}
-          EXTRACT_CONTENT: "false"   # Off — Google RSS redirect URLs break trafilatura
-
-      # ── 7. Clean up intermediate files ────────────────────────────────
-      - name: Clean up intermediate files
-        run: |
-          rm -f data/google_news_raw_*.xlsx
-          rm -f data/search_audit_*.xlsx
-          rm -f data/google_news_dedup_audit_*.xlsx
-          echo "--- Files remaining in data/ ---"
-          ls -lah data/
-
-      # ── 8. Commit latest_deduped.xlsx to repo ─────────────────────────
-      - name: Commit results
-        run: |
-          git config user.name  "github-actions"
-          git config user.email "github-actions@github.com"
-          git add data/latest_deduped.xlsx
-          git diff --cached --quiet && echo "No changes to commit" || \
-            git commit -m "chore: update latest_deduped.xlsx [$(date -u '+%Y-%m-%d %H:%M UTC')]"
-          git pull --rebase origin main
-          git push
+          LOOKBACK_HOURS: ${{ env.LOOKBACK_HOURS }}
+          PAST_DAYS: ${{ env.PAST_DAYS }}
+          MAX_ITEMS: ${{ env.MAX_ITEMS }}
+          DUP_THRESHOLD: ${{ env.DUP_THRESHOLD }}
