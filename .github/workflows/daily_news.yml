@@ -65,5 +65,7 @@ jobs:
           git add data/latest_deduped.xlsx
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "Update feed (${LOOKBACK_HOURS}h lookback)"
+          git stash
           git pull --rebase origin main
+          git stash pop
           git push origin HEAD:main
