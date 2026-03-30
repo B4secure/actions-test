@@ -24,8 +24,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 # CONFIG
 # ---------------------------
 
-import datetime
-from datetime import datetime, timezone
 
 _now = datetime.now(timezone.utc)
 _hour = _now.hour
