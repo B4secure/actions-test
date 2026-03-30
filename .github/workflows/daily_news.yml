@@ -1,14 +1,10 @@
 name: Daily News Collection
-
 on:
   schedule:
     - cron: "0 7 * * 2-5"
-      timezone: "Europe/London"
     - cron: "0 14 * * 1-5"
-      timezone: "Europe/London"
     - cron: "0 7 * * 1"
-      timezone: "Europe/London"
-
+    - cron: "0 10 * * 1"
   workflow_dispatch:
     inputs:
       lookback_hours:
@@ -17,34 +13,30 @@ on:
         default: ""
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Resolve config
         shell: bash
         run: |
-          echo "Trigger: ${{ github.event_name }}"
-          echo "Schedule: ${{ github.event.schedule }}"
-          echo "UTC: $(date -u)"
-          echo "London: $(TZ=Europe/London date)"
-
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.lookback_hours }}" ]; then
             LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours }}"
-          
           elif [ "${{ github.event.schedule }}" = "0 7 * * 1" ]; then
             LOOKBACK_HOURS=72
           elif [ "${{ github.event.schedule }}" = "0 7 * * 2-5" ]; then
@@ -52,16 +44,26 @@ jobs:
           else
             LOOKBACK_HOURS=7
           fi
-
           echo "LOOKBACK_HOURS=$LOOKBACK_HOURS" >> $GITHUB_ENV
-          echo "PAST_DAYS=2" >> $GITHUB_ENV
-          echo "MAX_ITEMS=30" >> $GITHUB_ENV
+          echo "PAST_DAYS=2"       >> $GITHUB_ENV
+          echo "MAX_ITEMS=30"      >> $GITHUB_ENV
           echo "DUP_THRESHOLD=0.7" >> $GITHUB_ENV
 
       - name: Run news collector
         run: python main.py
         env:
           LOOKBACK_HOURS: ${{ env.LOOKBACK_HOURS }}
-          PAST_DAYS: ${{ env.PAST_DAYS }}
-          MAX_ITEMS: ${{ env.MAX_ITEMS }}
-          DUP_THRESHOLD: ${{ env.DUP_THRESHOLD }}
+          PAST_DAYS:      ${{ env.PAST_DAYS }}
+          MAX_ITEMS:      ${{ env.MAX_ITEMS }}
+          DUP_THRESHOLD:  ${{ env.DUP_THRESHOLD }}
+
+      - name: Commit outputs
+        shell: bash
+        run: |
+          git config user.name  "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/latest_deduped.xlsx data/google_news_dedup_*.xlsx || true
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update feed (${LOOKBACK_HOURS}h lookback)"
+          git pull --rebase origin main
+          git push origin HEAD:main
