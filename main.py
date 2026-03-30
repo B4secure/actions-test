@@ -38,7 +38,6 @@ elif _hour < 12:           # Tue-Fri morning
 else:                      # Tue-Fri afternoon
     LOOKBACK_HOURS = 7
 
-LOOKBACK_HOURS      = int(_raw)
 PAST_DAYS           = int(os.getenv("PAST_DAYS", "1"))
 MAX_ITEMS           = int(os.getenv("MAX_ITEMS", "30"))
 DUP_THRESHOLD       = float(os.getenv("DUP_THRESHOLD", "0.7"))
