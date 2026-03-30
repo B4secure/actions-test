@@ -29,9 +29,14 @@ _now     = datetime.now(timezone.utc)
 _hour    = _now.hour
 _weekday = _now.weekday()
 
-_raw = os.getenv("LOOKBACK_HOURS")
-if not _raw or not _raw.strip():
-    raise ValueError("LOOKBACK_HOURS must be set by workflow")
+if os.getenv("LOOKBACK_HOURS"):
+    LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS"))
+elif _weekday == 0:        # Monday → covers whole weekend
+    LOOKBACK_HOURS = 72
+elif _hour < 12:           # Tue-Fri morning
+    LOOKBACK_HOURS = 24
+else:                      # Tue-Fri afternoon
+    LOOKBACK_HOURS = 7
 
 LOOKBACK_HOURS      = int(_raw)
 PAST_DAYS           = int(os.getenv("PAST_DAYS", "1"))
