@@ -591,6 +591,7 @@ def main():
         shutil.copyfile(dedup_file, latest)
         print(f"✓ Deduplicated file: {dedup_file}")
         print(f"✓ Latest file:       {latest}")
+        write_feed_json(df_clean)
 
     print(f"\n{'='*60}")
     print("SUMMARY")
@@ -606,6 +607,42 @@ def main():
         print(results["search_name"].value_counts().head(15).to_string())
 
     print(f"\n{'='*60}\n")
+
+# ---------------------------
+# FEED.JSON FOR GITHUB PAGES
+# ---------------------------
+
+def write_feed_json(df: pd.DataFrame):
+    """Convert deduped dataframe to docs/feed.json for GitHub Pages dashboard."""
+    import json
+
+    docs_dir = Path("docs")
+    docs_dir.mkdir(exist_ok=True)
+
+    records = []
+    for _, row in df.iterrows():
+        records.append({
+            "search_name": str(row.get("search_name", "")),
+            "title":       str(row.get("title", "")),
+            "title_en":    str(row.get("title_en", row.get("title", ""))),
+            "published":   str(row.get("published", "")),
+            "link":        str(row.get("link", "")),
+            "hl":          str(row.get("hl", "")),
+            "gl":          str(row.get("gl", "")),
+        })
+
+    feed = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "lookback_hours": LOOKBACK_HOURS,
+        "count":         len(records),
+        "articles":      records,
+    }
+
+    out = docs_dir / "feed.json"
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(feed, f, ensure_ascii=False, indent=2)
+
+    print(f"✅ feed.json written: {out} ({len(records)} articles)")
 
 
 if __name__ == "__main__":
