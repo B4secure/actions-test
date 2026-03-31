@@ -528,7 +528,7 @@ def semantic_dedupe(infile: str, out_clean: str, out_audit: str, threshold: floa
 
     removed = original_count - len(df_clean)
     print(f"\n✅ Dedup: {original_count} → {len(df_clean)} ({removed} removed, {removed/original_count*100:.1f}% reduction)")
-    return original_count, len(df_clean)
+    return original_count, len(df_clean), df_clean
 
 
 # ---------------------------
@@ -579,13 +579,14 @@ def main():
         dedup_file  = DATA_DIR / f"google_news_dedup_{ts}_past{PAST_DAYS}d.xlsx"
         dedup_audit = DATA_DIR / f"google_news_dedup_audit_{ts}.xlsx"
 
-        semantic_dedupe(
+        _, _, df_clean = semantic_dedupe(
             infile=str(raw_file),
             out_clean=str(dedup_file),
             out_audit=str(dedup_audit),
             threshold=DUP_THRESHOLD,
             model_name=MODEL_NAME,
         )
+        write_feed_json(df_clean)
 
         latest = DATA_DIR / "latest_deduped.xlsx"
         shutil.copyfile(dedup_file, latest)
