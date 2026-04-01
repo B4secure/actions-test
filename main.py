@@ -624,6 +624,7 @@ def write_feed_json(df: pd.DataFrame):
     for _, row in df.iterrows():
         records.append({
             "search_name": str(row.get("search_name", "")),
+            "search_query": str(row.get("search_query", "")),
             "title":       str(row.get("title", "")),
             "title_en":    str(row.get("title_en", row.get("title", ""))),
             "published":   str(row.get("published", "")),
