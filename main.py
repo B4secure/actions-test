@@ -97,8 +97,8 @@ Local Town Maasmechelen Dutch    ("Maasmechelen" OR "Hasselt" OR "Lanaken") AND 
 Local Town Maasmechelen French    ("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (manifestation OR bombe OR explosion OR fusillade OR couteau OR évacuation OR police OR arrestation OR protestation)
 Local Town Maasmechelen English    ("Maasmechelen" OR "Hasselt" OR "Lanaken") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR police OR arrest OR threat) AND -sport AND -football
 Village Maasmechelen    ("Maasmechelen outlet" OR "Designer Outlet Maasmechelen" OR "Maasmechelen Village")
-High Level City Germany English    ("Frankfurt" OR "Cologne" OR "Munich") AND "Germany" AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror attack") AND -football AND -soccer AND -Bundesliga AND -Bayern AND -weather AND -snow AND -strike AND -"bomb cyclone"
-High Level City Germany German    ("Frankfurt" OR "Köln" OR "München") AND (Bombe OR Bombendrohung OR Explosion OR Schießerei OR Messerangriff OR Terroranschlag OR "verdächtiges Paket") AND -Fußball AND -Bundesliga AND -Bayern AND -Wetter
+High Level City Germany English    ("Frankfurt" OR "Cologne" OR "Munich" OR "Stuttgart" OR "Germany") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror attack" OR protest OR strike OR riot OR "hate crime" OR "antisemitic" OR "vandalism" OR "attack") AND -football AND -soccer AND -Bundesliga AND -Bayern
+High Level City Germany German    ("Frankfurt" OR "Köln" OR "München" OR "Stuttgart" OR "Germany) AND (Bombe OR Bombendrohung OR Explosion OR Schießerei OR Messerangriff OR Terroranschlag OR "verdächtiges Paket" OR Protest OR Streik OR Aufruhr OR Blockade OR Antisemitismus OR Sachbeschädigung OR Anschlag OR Hassverbrechen) AND -Fußball AND -Bundesliga AND -Wetter
 Local Town Wertheim English    ("Wertheim" OR "Wurzburg" OR "Aschaffenburg"  ) AND ("protest" OR "boycott" OR "bomb"  OR "shooting" OR "explosion" OR "stabbing"  OR "suspicious package" OR "unattended Package" OR "explosive" OR "bomb threat" )
 Local Town Wertheim German    ( "Wertheim" OR "Wurzburg" OR "Aschaffenburg") AND ("protest" OR "protestieren" OR "boykottieren" OR "Boykott" OR "Bombe" OR "Bombendrohung" OR "verdächtiges Paket" OR "unbeaufsichtigtes Paket" OR "explosion"  OR "Sprengstoffe" OR "Schießen" OR "Stechend" OR "Messerstecherei")
 Village Wertheim    ("Wertheim outlet" OR "Designer Outlet Wertheim" OR "Wertheim Village")
@@ -113,6 +113,7 @@ Village Las Rozas La Roca    ("Las Rozas outlet" OR "La Roca outlet" OR "Las Roz
 Local Town Bicester Kildare    ("Bicester" OR "Kildare" OR "Newbridge") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror" OR "police operation") AND -"petrol bomb" AND -sport AND -GAA AND -football
 Village Bicester Kildare    ("Bicester Village" OR "Kildare Village" OR "Bicester outlet" OR "Kildare outlet")
 High Level City UK Ireland    ("Dublin" OR "Oxford" OR "London") AND ("Bomb" OR "explosion" OR "shooting"  OR "Stabbing" OR "suspicious package" OR "unattended Package" OR "explosive" OR "bomb threat" OR "Protest" OR "blockade" )
+High Level City UK Ireland    ("Oxford" OR "Bicester" OR "Oxfordshire" OR "London" OR "UK" OR "England" OR "Britain") AND ("protest" OR "demonstration" OR "blockade" OR "strike" OR "march" OR "rally" OR "civil unrest" OR "disorder" OR "dispersal order" OR "anti-social behaviour" OR "flash mob" OR "social media gathering" OR "link-up") AND -sport AND -football
 High Level City France English    ("Paris" OR "Île-de-France") AND "France" AND ("bomb threat" OR "suspicious package" OR "shooting" OR "stabbing" OR "terror attack" OR "police operation" OR evacuation) AND -Texas AND -"Paris, Texas" AND -film AND -movie AND -football AND -transfer
 High Level City France French    ("Paris" OR "Île-de-France") AND ("alerte à la bombe" OR "colis suspect" OR "menace à la bombe" OR fusillade OR "attentat" OR "attaque au couteau" OR "opération de police" OR évacuation) AND -immobilier AND -"prix immobilier" AND -foot AND -transfert AND -Texas
 Local Town La Vallee French    ("Serris" OR "Chessy" OR "Bailly-Romainvilliers" OR "Magny-le-Hongre" OR "Seine-et-Marne") AND (manifestation OR "alerte à la bombe" OR "colis suspect" OR bombe OR fusillade OR couteau OR protestation OR évacuation OR attentat OR "opération de police")
@@ -126,6 +127,7 @@ Local Town Fidenza English    ("Fidenza outlet" OR "Designer Outlet Fidenza" OR 
 Local Town Fidenza Italian    ("Fidenza" OR "Parma" OR "Piacenza" OR "Cremona") AND ("boicottare" OR "protesta" OR "Bomba" OR "esplosione" OR "esplosivi"  OR "sparatoria" OR "pacco incustodito" OR "pacco sospetto" OR "Accoltellamento" OR "minaccia bomba")
 Village Fidenza    ("Fidenza outlet" OR "Designer Outlet Fidenza" OR "Fidenza Village")
 Roermond Outlet    ("Designer Outlet Roermond" OR "Roermond outlet" OR "Roermond shopping")
+Hate Crime Europe English    ("antisemitic" OR "hate crime" OR "Islamophobic" OR "racist attack" OR "extremist attack") AND ("Germany" OR "France" OR "Belgium" OR "Italy" OR "Spain" OR "UK" OR "Ireland" OR "Netherlands") AND (attack OR vandalism OR assault OR incident)
 """.strip()
 
 
