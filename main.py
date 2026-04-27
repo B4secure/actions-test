@@ -110,6 +110,7 @@ Village Ingolstadt    ("Ingolstadt outlet" OR "Designer Outlet Ingolstadt" OR "I
 High Level City Spain English    ("Madrid" OR "Barcelona") AND "Spain" AND ("bomb threat" OR "suspicious package" OR "stabbing attack" OR "shooting attack" OR "terror attack" OR "police operation" OR "evacuation") AND -football AND -soccer AND -transfer AND -signing AND -LaLiga AND -"Champions League" AND -"Real Madrid" AND -"Atletico"
 High Level City Spain Spanish    ("Madrid" OR "Barcelona") AND ("amenaza de bomba" OR "paquete sospechoso" OR "paquete explosivo" OR "ataque con cuchillo" OR "tiroteo" OR "atentado" OR "operación policial" OR "evacuación" OR "artefacto explosivo") AND -fútbol AND -fichaje AND -Liga AND -transferencia
 Local Town Las Rozas English    ("Las Rozas" OR "La Roca del Vallès" OR "Mataró" OR "Badalona") AND (protest OR bomb OR explosion OR shooting OR stabbing OR evacuation OR "police operation" OR arrest) AND -football AND -transfer
+Local Town Las Rozas Spanish    ("Las Rozas" OR "La Roca del Vallès" OR "Mataró" OR "Badalona" OR "Pozuelo" OR "Pozuelo de Alarcón" OR "Cercanías Madrid" OR "Renfe" OR "El Barrial") AND (protesta OR manifestación OR huelga OR "amenaza de bomba" OR explosión OR tiroteo OR acuchillamiento OR evacuación OR "operación policial" OR detención OR tren OR ferroviario OR suspensión) AND -fútbol AND -fichaje
 Local Town Las Rozas Spanish    ("Las Rozas" OR "La Roca del Vallès" OR "Mataró" OR "Badalona") AND (protesta OR "amenaza de bomba" OR explosión OR tiroteo OR acuchillamiento OR evacuación OR "operación policial" OR detención) AND -fútbol AND -fichaje
 Village Las Rozas La Roca    ("Las Rozas outlet" OR "La Roca outlet" OR "Las Rozas Village" OR "La Roca Village")
 Local Town Bicester Kildare    ("Bicester" OR "Kildare" OR "Newbridge") AND (bomb OR explosion OR shooting OR stabbing OR "suspicious package" OR "bomb threat" OR "terror" OR "police operation") AND -"petrol bomb" AND -sport AND -GAA AND -football
@@ -130,6 +131,8 @@ Local Town Fidenza Italian    ("Fidenza" OR "Parma" OR "Piacenza" OR "Cremona") 
 Village Fidenza    ("Fidenza outlet" OR "Designer Outlet Fidenza" OR "Fidenza Village")
 Roermond Outlet    ("Designer Outlet Roermond" OR "Roermond outlet" OR "Roermond shopping")
 Hate Crime Europe English    ("antisemitic" OR "hate crime" OR "Islamophobic" OR "racist attack" OR "extremist attack") AND ("Germany" OR "France" OR "Belgium" OR "Italy" OR "Spain" OR "UK" OR "Ireland" OR "Netherlands") AND (attack OR vandalism OR assault OR incident)
+Spain Transport Disruption Spanish    ("Cercanías" OR "Renfe" OR "Metro Madrid" OR "Metro Barcelona" OR "AVE" OR "autopista" OR "autovía" OR "A6" OR "M40" OR "M30" OR "M50") AND ("amenaza de bomba" OR "paquete sospechoso" OR evacuación OR suspensión OR corte OR incidente OR "orden público" OR detenido OR explosivo OR desalojo) AND ("Madrid" OR "Barcelona" OR "Las Rozas" OR "Pozuelo")
+Spain Transport Disruption English    ("Cercanias" OR "Renfe" OR "Madrid Metro" OR "Barcelona Metro" OR "Spanish rail" OR "Madrid motorway" OR "A6 motorway") AND ("bomb threat" OR "suspicious package" OR evacuation OR suspension OR closure OR incident OR "public order" OR arrested OR explosive) AND ("Madrid" OR "Barcelona" OR "Las Rozas" OR "Pozuelo")
 """.strip()
 
 
