@@ -1,6 +1,5 @@
 name: Daily News Collection
 on:
-  
   workflow_dispatch:
     inputs:
       lookback_hours:
@@ -11,6 +10,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: village-news-collector
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -28,16 +31,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Resolve config
         shell: bash
         run: |
-          echo "Trigger: ${{ github.event_name }}"
-          echo "Schedule: ${{ github.event.schedule }}"
-          echo "UTC: $(date -u)"
-
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.lookback_hours }}" ]; then
             LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours }}"
           elif [ "${{ github.event.schedule }}" = "0 7 * * 1" ]; then
@@ -47,12 +45,10 @@ jobs:
           else
             LOOKBACK_HOURS=7
           fi
-
           echo "LOOKBACK_HOURS=$LOOKBACK_HOURS" >> $GITHUB_ENV
-          echo "PAST_DAYS=2"                    >> $GITHUB_ENV
-          echo "MAX_ITEMS=30"                   >> $GITHUB_ENV
-          echo "DUP_THRESHOLD=0.7"              >> $GITHUB_ENV
-          echo "FINAL LOOKBACK_HOURS=$LOOKBACK_HOURS"
+          echo "PAST_DAYS=2"       >> $GITHUB_ENV
+          echo "MAX_ITEMS=30"      >> $GITHUB_ENV
+          echo "DUP_THRESHOLD=0.7" >> $GITHUB_ENV
 
       - name: Run news collector
         run: python main.py
@@ -72,33 +68,14 @@ jobs:
       - name: Commit outputs
         shell: bash
         run: |
-          set -e
           git config user.name  "github-actions"
           git config user.email "github-actions@github.com"
-
           files=()
           [ -f data/latest_deduped.xlsx ] && files+=(data/latest_deduped.xlsx)
-          [ -f docs/feed.json ]              && files+=(docs/feed.json)
-          [ -f docs/empty_searches.json ]  && files+=(docs/empty_searches.json)
-
-          shopt -s nullglob
-          data_files=(data/google_news_dedup_*.xlsx)
-          shopt -u nullglob
-          if [ ${#data_files[@]} -gt 0 ]; then
-            files+=("${data_files[@]}")
-          fi
-
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No output files to commit."
-            exit 0
-          fi
-
+          [ -f docs/feed.json ]           && files+=(docs/feed.json)
+          [ -f docs/empty_searches.json ] && files+=(docs/empty_searches.json)
+          [ ${#files[@]} -eq 0 ] && echo "No output files to commit." && exit 0
           git add "${files[@]}"
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update village feed (${LOOKBACK_HOURS}h lookback)"
+          git diff --cached --quiet && echo "No changes to commit." && exit 0
+          git commit -m "Update village feed (${{ env.LOOKBACK_HOURS }}h lookback)"
           git push origin HEAD:main
