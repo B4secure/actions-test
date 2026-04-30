@@ -158,6 +158,7 @@ High Level City Spain Spanish    ("Cercanías" OR "Renfe" OR "Metro Madrid" OR "
 High Level City Spain English    ("Cercanias" OR "Renfe" OR "Madrid Metro" OR "Barcelona Metro" OR "Spanish rail" OR "Madrid motorway" OR "A6 motorway") AND ("bomb threat" OR "suspicious package" OR evacuation OR suspension OR closure OR incident OR "public order" OR arrested OR explosive) AND ("Madrid" OR "Barcelona" OR "Las Rozas" OR "Pozuelo")
 Roermond Outlet    ("Roermond" OR "Venlo" OR "Sittard" OR "A2" OR "E314") AND (afsluiting OR wegafsluiting OR vertraging OR stremming OR protest OR blokkade OR evacuatie OR incident OR politie OR ongeluk OR file) AND -sport AND -voetbal
 Roermond Outlet    ("Roermond" OR "Venlo" OR "Limburg") AND (closure OR disruption OR protest OR blockade OR evacuation OR incident OR accident OR delay OR "road closed" OR "rail disruption") AND -sport AND -football
+London Transport   ("Farringdon" OR "Elizabeth Line" OR "Thameslink" OR "London Overground" OR "London Underground" OR "TfL" OR "Transport for London" OR "Victoria line" OR "Northern line" OR "Central line" OR "Jubilee line" OR "Piccadilly line" OR "Bakerloo line" OR "District line" OR "Circle line" OR "Metropolitan line" OR "DLR" OR "Crossrail")
 """.strip()
 
 
