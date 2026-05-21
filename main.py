@@ -181,6 +181,7 @@ VILLAGE_FALLBACK_MAP = {
     r"local town fidenza english":    '("Fidenza outlet" OR "Designer Outlet Fidenza" OR "Parma") AND (news OR incident OR police)',
     r"peta broad search":             '"PETA" AND ("outlet" OR "luxury" OR "shopping" OR "fashion" OR "fur" OR "leather") AND (protest OR campaign OR action)',
     r"peta village search":           '"PETA" AND ("designer outlet" OR "outlet village" OR "luxury shopping") AND (protest OR campaign OR demonstration)',
+    r"high level city spain spanish": '("Madrid" OR "Barcelona" OR "Cataluña") AND ("tiroteo" OR "Mossos" OR "atentado" OR "disparos")',
     r"roermond outlet":               '("Designer Outlet Roermond" OR "Roermond outlet" OR "Roermond shopping")',
 }
 
